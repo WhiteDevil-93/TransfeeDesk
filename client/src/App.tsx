@@ -1,0 +1,451 @@
+import { useState, useMemo, useEffect, useRef } from "react";
+import { Switch, Route, Router, Link, useLocation } from "wouter";
+import { useHashLocation } from "wouter/use-hash-location";
+import { QueryClientProvider, useQuery, useMutation } from "@tanstack/react-query";
+import { queryClient, apiRequest, session } from "./lib/queryClient";
+import { Toaster } from "@/components/ui/toaster";
+import { useToast } from "@/hooks/use-toast";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Check, X, Clock, Copy, MessageCircle, Phone, Users, Inbox, Stethoscope, LogOut, Trash2, Search, Bell, BellRing, MapPin, CalendarDays, Siren, BedDouble, AlarmClock, Settings, ExternalLink, Send, ShieldCheck, KeyRound } from "lucide-react";
+import { unlockAudio, sounds, notify, askNotify, canNotify, defaultSettings, type AlertSettings } from "./alerts";
+import type { Referral, Doctor, Status, RosterSpec, RosterContact, User, AuditRow, AppSettings, Followup } from "@shared/schema";
+import { Admin } from "./admin";
+import { Portal } from "./portal";
+import { TEAMS, TEAM_NAMES } from "@shared/teams";
+import { TeamSelect, ImagePicker, ReferrerPortal, Timeline, Images, UnitRoster, messageOf, type UploadImage } from "./workflows";
+type Me = User;
+
+const Logo = () => (
+  <svg viewBox="0 0 32 32" width="28" height="28" fill="none" aria-label="TransferDesk logo">
+    <rect x="2" y="2" width="28" height="28" rx="8" stroke="currentColor" strokeWidth="2.5" />
+    <path d="M9 13h11m0 0-3.5-3.5M20 13l-3.5 3.5M23 19H12m0 0 3.5-3.5M12 19l3.5 3.5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+const pColor: Record<string,string> = { P1: "bg-red-600 text-white", P2: "bg-amber-500 text-black", P3: "bg-emerald-600 text-white" };
+const sLabel: Record<Status,string> = { pending: "New", accepted: "Accepted", declined: "Declined", waiting: "Waiting", advised:"Advice sent" };
+const sColor: Record<Status,string> = { pending: "bg-sky-100 text-sky-900 dark:bg-sky-900 dark:text-sky-100", accepted: "bg-emerald-100 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100", declined: "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200", waiting: "bg-amber-100 text-amber-900 dark:bg-amber-900 dark:text-amber-100", advised:"bg-teal-100 text-teal-900 dark:bg-teal-900 dark:text-teal-100" };
+const ago = (iso: string) => { const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m/60)} h ago` : new Date(iso).toLocaleDateString(); };
+const waNum = (p: string) => { const d = p.replace(/\D/g, ""); return d.startsWith("0") ? "27" + d.slice(1) : d; };
+const catchUrl = (lat: string, lon: string) => `https://catchments.medricsoftware.co.za/?lat=${lat}&lon=${lon}`;
+const LOCS = ["Casualty / ED", "Ward", "ICU / High care", "Theatre", "Clinic / OPD"];
+const BEDS = ["General ward", "High care", "ICU", "Theatre", "No bed – advice only"];
+const BEDSTAT = ["Not assigned", "Bed requested", "Bed allocated", "Patient en route", "Arrived"];
+const mins = (iso: string) => (Date.now() - new Date(iso).getTime()) / 60000;
+function isOverdue(r: Referral, st: AlertSettings) {
+  if (r.status === "pending") return mins(r.createdAt) > (r.priority === "P1" ? st.p1 : r.priority === "P2" ? st.p2 : st.p3);
+  if (r.status === "waiting" && r.remindAt) return new Date(r.remindAt).getTime() <= Date.now();
+  return false;
+}
+const useSpecs = () => useQuery<{ id: string; name: string; group: string }[]>({ queryKey: ["/api/specialties"] });
+const specName = (specs: any[] | undefined, id: string) => specs?.find(s => s.id === id)?.name || id || "Unspecified";
+const referLink = (team?:string) => window.location.href.split("#")[0] + "#/refer" + (team?`/${team}`:"");
+
+function Field({ label, children, hint }: any) { return <div className="space-y-1.5"><Label className="text-sm font-medium">{label}</Label>{children}{hint && <p className="text-xs text-muted-foreground">{hint}</p>}</div>; }
+
+/* ---------- PUBLIC REFERRAL FORM ---------- */
+const empty = { team:"",consultType:"transfer",consent: false, specialty:"", currentLocation:"", bedNeeded:"", lat:"", lon:"", doctorName:"", hospital:"", department:"", phone:"", email:"", patientInitials:"", age:"", sex:"", folderNo:"", diagnosis:"", history:"", exam:"", investigations:"", reason:"", suggestedPriority:"P2" };
+function ReferPage({params}:any) {
+  const preset=params?.team||"";
+  const [f, setF] = useState<any>({...empty,team:TEAMS.includes(preset as any)?preset:""}); const [done, setDone] = useState<any>(null); const { toast } = useToast();
+  const [images,setImages]=useState<UploadImage[]>([]),[showPortal,setShowPortal]=useState(false);
+  const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target ? e.target.value : e });
+  const { data: specs } = useSpecs(); const [geo, setGeo] = useState("");
+  const groups = useMemo(() => Array.from(new Set((specs || []).map(s => s.group))).filter(g => g !== "Management"), [specs]);
+  const locate = () => { if (!navigator.geolocation) return setGeo("Location not available on this device"); setGeo("Finding location...");
+    navigator.geolocation.getCurrentPosition((p) => { setF((x: any) => ({ ...x, lat: p.coords.latitude.toFixed(6), lon: p.coords.longitude.toFixed(6) })); setGeo(""); }, () => setGeo("Could not get location. You can skip this."), { enableHighAccuracy: true, timeout: 10000 }); };
+  const m = useMutation({ mutationFn: async () => (await apiRequest("POST", "/api/referrals", {...f,images})).json(), onSuccess: (d) => setDone(d), onError: e => toast({ title: messageOf(e), variant: "destructive" }) });
+  if(done && showPortal) return <Shell public><ReferrerPortal initialRef={done.ref} initialCode={done.followupCode}/></Shell>;
+  if (done) return <Shell public><Card className="p-6 max-w-lg mx-auto space-y-3"><Check className="mx-auto h-10 w-10 text-primary" /><h1 className="text-xl font-semibold text-center">Referral received by {f.team}</h1><p className="text-sm">Save both values below. The code is private and unlocks advice, updates and images for this referral.</p><p className="font-mono text-lg font-bold break-all" data-testid="text-ref">{done.ref}</p><p className="font-mono text-sm break-all p-3 border rounded" data-testid="text-followup-code">{done.followupCode}</p><p className="text-xs text-muted-foreground">Do not share the code in a group chat. If lost, contact the receiving unit consultant to verify your identity and reset access.</p><div className="flex gap-2 flex-wrap"><Button variant="outline" onClick={()=>navigator.clipboard?.writeText(`Reference: ${done.ref}\nPrivate code: ${done.followupCode}`)}>Copy receipt</Button><Button onClick={()=>setShowPortal(true)} data-testid="button-receipt-followup">Open follow-up portal</Button><Button variant="ghost" onClick={() => { setF({...empty,team:f.team}); setDone(null);setImages([]); }}>New referral</Button></div></Card></Shell>;
+  return <Shell public>
+    <form className="max-w-3xl mx-auto space-y-6" onSubmit={(e) => { e.preventDefault(); m.mutate(); }}>
+      <div><h1 className="text-xl font-semibold">Inter-hospital referral</h1><p className="text-sm text-muted-foreground">Fields marked * are required. Please use patient initials only, not full names or ID numbers.</p></div>
+      <Card className="p-5 space-y-4"><h2 className="font-semibold">Referring doctor</h2>
+        <div className="grid sm:grid-cols-2 gap-4">
+          <Field label="Full name *"><Input data-testid="input-doctor" value={f.doctorName} onChange={set("doctorName")} required /></Field>
+          <Field label="Hospital / facility *"><Input value={f.hospital} onChange={set("hospital")} required /></Field>
+          <Field label="Department / ward"><Input value={f.department} onChange={set("department")} /></Field>
+          <Field label="Cellphone (WhatsApp) *"><Input type="tel" value={f.phone} onChange={set("phone")} placeholder="082 123 4567" required /></Field>
+          <Field label="Email"><Input type="email" value={f.email} onChange={set("email")} /></Field>
+        </div>
+        <Field label="Facility location (for EMS catchment)" hint="Optional. Lets the receiving team confirm your facility's catchment area.">
+          <div className="flex flex-wrap gap-2 items-center"><Button type="button" variant="outline" size="sm" onClick={locate} data-testid="button-locate"><MapPin className="h-4 w-4 mr-1" />{f.lat ? "Update location" : "Share my location"}</Button>
+          {f.lat && <span className="text-xs font-mono text-muted-foreground">{f.lat}, {f.lon}</span>}{geo && <span className="text-xs text-muted-foreground">{geo}</span>}</div></Field></Card>
+      <Card className="p-5 space-y-4"><h2 className="font-semibold">Referral to</h2>
+        <div className="grid sm:grid-cols-2 gap-4"><Field label="Receiving unit *"><TeamSelect value={f.team} onChange={v=>setF({...f,team:v})}/></Field>
+          <Field label="Consult type"><Select value={f.consultType} onValueChange={v=>setF({...f,consultType:v,bedNeeded:v==="advice"?"No bed – advice only":""})}><SelectTrigger data-testid="select-consult-type"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="transfer">Transfer request</SelectItem><SelectItem value="advice">Advice only / no transfer</SelectItem></SelectContent></Select></Field></div>
+        <div className="grid sm:grid-cols-3 gap-4">
+          <Field label="Specialty *"><Select value={f.specialty} onValueChange={set("specialty")}><SelectTrigger data-testid="select-specialty"><SelectValue placeholder="Select specialty" /></SelectTrigger><SelectContent>
+            {groups.map(g => <div key={g}><p className="px-2 py-1 text-xs font-semibold text-muted-foreground">{g}</p>{(specs || []).filter(s => s.group === g).map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</div>)}
+            <SelectItem value="other">Other / not listed</SelectItem></SelectContent></Select></Field>
+          <Field label="Patient currently in"><Select value={f.currentLocation} onValueChange={set("currentLocation")}><SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger><SelectContent>{LOCS.map(l => <SelectItem key={l} value={l}>{l}</SelectItem>)}</SelectContent></Select></Field>
+          <Field label="Bed needed"><Select value={f.bedNeeded} onValueChange={set("bedNeeded")}><SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger><SelectContent>{BEDS.map(l => <SelectItem key={l} value={l}>{l}</SelectItem>)}</SelectContent></Select></Field>
+        </div></Card>
+      <Card className="p-5 space-y-4"><h2 className="font-semibold">Patient</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <Field label="Initials *"><Input value={f.patientInitials} onChange={set("patientInitials")} required /></Field>
+          <Field label="Age *"><Input value={f.age} onChange={set("age")} required /></Field>
+          <Field label="Sex *"><Select value={f.sex} onValueChange={set("sex")}><SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger><SelectContent><SelectItem value="M">Male</SelectItem><SelectItem value="F">Female</SelectItem></SelectContent></Select></Field>
+          <Field label="Folder no."><Input value={f.folderNo} onChange={set("folderNo")} /></Field>
+        </div>
+        <Field label="Working diagnosis *"><Input value={f.diagnosis} onChange={set("diagnosis")} required /></Field>
+        <Field label="History *"><Textarea rows={4} value={f.history} onChange={set("history")} required /></Field>
+        <Field label="Examination (incl. vitals) *"><Textarea rows={4} value={f.exam} onChange={set("exam")} required placeholder="BP, HR, RR, SpO2, Temp, GCS, glucose, then findings" /></Field>
+        <Field label="Investigations *"><Textarea rows={4} value={f.investigations} onChange={set("investigations")} required placeholder="Bloods, ECG, imaging, results available so far" /></Field>
+        <Field label="Reason for referral / request *"><Textarea rows={2} value={f.reason} onChange={set("reason")} required /></Field>
+        <Field label="Suggested priority *">
+          <div className="grid sm:grid-cols-3 gap-2">{[["P1","Emergency, needs transfer now"],["P2","Urgent, within hours"],["P3","Routine / advice"]].map(([p,d]) => (
+            <button type="button" key={p} data-testid={`button-priority-${p}`} onClick={() => setF({ ...f, suggestedPriority: p })} className={`text-left rounded-md border p-3 transition ${f.suggestedPriority===p ? "border-primary ring-2 ring-primary/30" : "hover-elevate"}`}><span className={`inline-block rounded px-2 py-0.5 text-xs font-bold ${pColor[p]}`}>{p}</span><p className="text-sm mt-1">{d}</p></button>))}</div>
+        </Field>
+      </Card>
+      <Card className="p-4"><ImagePicker images={images} onChange={setImages}/></Card>
+      <Card className="p-4 space-y-2 text-sm"><label className="flex gap-3 items-start"><input type="checkbox" className="mt-1 h-4 w-4" checked={!!f.consent} onChange={(e) => setF({ ...f, consent: e.target.checked })} data-testid="checkbox-consent" />
+        <span>I confirm this information is shared only for this patient's care and transfer, contains the minimum needed, and the patient (or their representative) has been told it is being shared where this is possible. *</span></label>
+        <p className="text-xs text-muted-foreground pl-7">Read how this information is used, kept and deleted in the <Link href="/privacy" className="underline">privacy notice</Link>.</p></Card>
+      <Button type="submit" size="lg" className="w-full" disabled={m.isPending || !f.consent || !f.team} data-testid="button-submit">{m.isPending ? "Sending..." : "Submit referral"}</Button>
+    </form></Shell>;
+}
+
+function StatusPage({ params }: any) {
+  const [ref, setRef] = useState(params?.ref || ""); const [phone, setPhone] = useState(""); const [data, setData] = useState<any>(null); const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
+  const go = async (e: any) => { e.preventDefault(); setErr(""); setData(null); setBusy(true);
+    try { setData(await (await apiRequest("POST", "/api/status", { ref: ref.trim(), phone })).json()); } catch (x: any) { setErr(String(x.message).startsWith("429") ? "Too many attempts. Please try later or phone the unit." : "No referral matches that reference and cellphone number."); } finally { setBusy(false); } };
+  return <Shell public><div className="max-w-md mx-auto space-y-4"><h1 className="text-xl font-semibold">Referral status</h1>
+    <p className="text-sm text-muted-foreground">Enter your reference number and the cellphone number you used on the referral.</p>
+    <form className="space-y-2" onSubmit={go}><Input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="TX-XXXXXXX" required data-testid="input-status-ref" /><Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Your cellphone number" required data-testid="input-status-phone" /><Button className="w-full" disabled={busy}>Check status</Button></form>
+    {err && <p className="text-sm text-destructive">{err}</p>}
+    {data && <Card className="p-5 space-y-2"><div className="flex gap-2 items-center"><span className="font-mono font-bold">{data.ref}</span><Badge className={sColor[data.status as Status]}>{sLabel[data.status as Status]}</Badge><span className={`rounded px-2 py-0.5 text-xs font-bold ${pColor[data.priority]}`}>{data.priority}</span></div>
+      {data.bedStatus && data.bedStatus !== "Not assigned" && <p className="text-sm"><BedDouble className="inline h-4 w-4 mr-1" />{data.bedStatus}</p>}<p className="text-xs text-muted-foreground">Updated {ago(data.updatedAt)}. Details of the decision are sent to you on WhatsApp.</p></Card>}
+  </div></Shell>;
+}
+
+/* ---------- SHELL / AUTH ---------- */
+function Shell({ children, public: pub, me, onLogout, alertCount, onSettings, admin }: any) {
+  const [loc] = useLocation();
+  const nav = [["/", "Queue", Inbox], ["/oncall", "On call", CalendarDays], ["/catchments", "Catchments", MapPin], ["/doctors", "Doctors", Stethoscope], ...(admin ? [["/admin", "Admin", ShieldCheck]] : [])] as const;
+  return <div className="min-h-screen bg-background"><header className="border-b bg-card sticky top-0 z-30"><div className="max-w-6xl mx-auto px-4 h-14 flex items-center gap-2">
+    <span className="text-primary"><Logo /></span><span className={`font-semibold ${pub ? "" : "hidden md:inline"}`}>TransferDesk</span>
+    {!pub && <nav className="flex gap-0.5 ml-2 overflow-x-auto">{(nav as unknown as any[]).map(([h,l,I]: any) => <Link key={h} href={h}><Button variant={loc===h?"secondary":"ghost"} size="sm" data-testid={`link-${l}`} aria-label={l}><I className="h-4 w-4 lg:mr-1" /><span className="hidden lg:inline">{l}</span></Button></Link>)}</nav>}
+    {!pub && <div className="ml-auto flex items-center gap-1 text-sm">
+      <Button size="icon" variant="ghost" onClick={onSettings} aria-label="Alert settings" className="relative" data-testid="button-alerts">{alertCount ? <BellRing className="h-4 w-4 text-red-600" /> : <Bell className="h-4 w-4" />}{alertCount ? <span className="absolute -top-0.5 -right-0.5 bg-red-600 text-white text-[10px] rounded-full h-4 min-w-4 px-1 grid place-items-center">{alertCount}</span> : null}</Button>
+      <span className="font-medium hidden sm:inline">{me}</span><Button size="icon" variant="ghost" onClick={onLogout} aria-label="Log out"><LogOut className="h-4 w-4" /></Button></div>}
+  </div></header><main className="max-w-6xl mx-auto px-4 py-6">{children}</main>
+  <footer className="max-w-6xl mx-auto px-4 pb-6 text-xs text-muted-foreground"><Link href="/privacy" className="underline">Privacy notice (POPIA)</Link></footer></div>;
+}
+
+function Login({ onIn }: { onIn: (u: Me) => void }) {
+  const [username, setU] = useState(""); const [password, setP] = useState(""); const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
+  const go = async (e: any) => { e.preventDefault(); unlockAudio(); askNotify(); setBusy(true); setErr("");
+    try { const r = await (await apiRequest("POST", "/api/login", { username, password })).json(); session.token = r.token; onIn(r.user); }
+    catch (x: any) { setErr(String(x.message || "").replace(/^\d+:\s*/, "").replace(/^\{"message":"(.*)"\}$/, "$1") || "Sign-in failed"); } finally { setBusy(false); } };
+  return <div className="min-h-screen grid place-items-center bg-background p-4"><Card className="p-6 w-full max-w-sm space-y-4"><div className="flex items-center gap-2 text-primary"><Logo /><span className="font-semibold text-foreground">TransferDesk</span></div>
+    <p className="text-sm text-muted-foreground">Sign in with your own account. Every case you open or change is recorded. Allow notifications so P1 alerts reach you.</p>
+    <form className="space-y-3" onSubmit={go}><Field label="Username"><Input autoComplete="username" value={username} onChange={(e) => setU(e.target.value)} required data-testid="input-username" /></Field>
+    <Field label="Password"><Input type="password" autoComplete="current-password" value={password} onChange={(e) => setP(e.target.value)} required data-testid="input-password" /></Field>
+    {err && <p className="text-sm text-destructive">{err}</p>}<Button className="w-full" disabled={busy} data-testid="button-login">{busy ? "Signing in..." : "Sign in"}</Button></form>
+    <p className="text-xs text-muted-foreground">Sessions end after 30 minutes of inactivity. Forgot your password? Ask a TransferDesk admin to reset it.</p>
+    <div className="flex gap-4 flex-wrap text-sm"><Link href="/" className="underline">Home</Link><Link href="/refer" className="underline">Referral form</Link><Link href="/followup" className="underline">Follow up referral</Link><Link href="/privacy" className="underline">Privacy notice</Link></div></Card></div>;
+}
+
+/* ---------- LANDING (public entry) ---------- */
+function Landing() {
+  return <div className="min-h-screen bg-background flex flex-col"><header className="border-b bg-card"><div className="max-w-4xl mx-auto px-4 h-14 flex items-center gap-2"><span className="text-primary"><Logo /></span><span className="font-semibold">TransferDesk</span><span className="ml-auto text-xs text-muted-foreground hidden sm:inline">Inter-hospital referrals &amp; consults</span></div></header>
+    <main className="flex-1 flex items-center"><div className="max-w-4xl mx-auto px-4 py-10 w-full">
+      <h1 className="text-2xl font-semibold mb-1">Welcome to TransferDesk</h1>
+      <p className="text-sm text-muted-foreground mb-8">Choose how you want to continue. Receiving-staff accounts sign in to the referral desk; referring clinicians use the secure referral PWA.</p>
+      <div className="grid sm:grid-cols-2 gap-4">
+        <Link href="/login"><Card className="p-6 hover-elevate space-y-3"><div className="flex items-center gap-2 text-primary"><Inbox className="h-6 w-6" /><span className="font-semibold text-foreground">Staff sign-in</span></div>
+          <p className="text-sm text-muted-foreground">Receiving teams: open the referral desk, review consults, send advice and track transfers. P1 alerts and the on-call roster.</p></Card></Link>
+        <Link href="/portal"><Card className="p-6 hover-elevate space-y-3"><div className="flex items-center gap-2 text-primary"><Stethoscope className="h-6 w-6" /><span className="font-semibold text-foreground">I'm a referring clinician</span></div>
+          <p className="text-sm text-muted-foreground">Doctors, nurses and other professionals: sign up once, your details are stored and auto-fill every referral. See your consults, clinical advice and the full on-call roster.</p></Card></Link>
+      </div>
+      <div className="flex gap-4 flex-wrap text-sm mt-8 text-muted-foreground"><Link href="/refer" className="underline">Referral form</Link><Link href="/followup" className="underline">Follow up a referral</Link><Link href="/status" className="underline">Check referral status</Link><Link href="/privacy" className="underline">Privacy notice (POPIA)</Link></div>
+    </div></main>
+    <footer className="max-w-4xl mx-auto px-4 pb-6 text-xs text-muted-foreground">TransferDesk · inter-hospital referral and consult platform</footer></div>;
+}
+
+function ChangePassword({ me, onDone }: { me: Me; onDone: () => void }) {
+  const [cur, setCur] = useState(""); const [n1, setN1] = useState(""); const [n2, setN2] = useState(""); const [err, setErr] = useState("");
+  const go = async (e: any) => { e.preventDefault(); setErr(""); if (n1 !== n2) return setErr("New passwords do not match"); if (n1.length < 10) return setErr("Use at least 10 characters");
+    try { await apiRequest("POST", "/api/me/password", { current: cur, next: n1 }); onDone(); } catch (x: any) { setErr(String(x.message).includes("incorrect") ? "Current password is incorrect" : "Could not change password"); } };
+  return <div className="min-h-screen grid place-items-center bg-background p-4"><Card className="p-6 w-full max-w-sm space-y-4"><div className="flex items-center gap-2"><KeyRound className="h-5 w-5 text-primary" /><span className="font-semibold">Set your own password</span></div>
+    <p className="text-sm text-muted-foreground">Hi {me.name}. Your account has a temporary password. Choose a new one (10+ characters) that only you know.</p>
+    <form className="space-y-3" onSubmit={go}><Field label="Temporary password"><Input type="password" value={cur} onChange={(e) => setCur(e.target.value)} required data-testid="input-current" /></Field>
+    <Field label="New password"><Input type="password" autoComplete="new-password" value={n1} onChange={(e) => setN1(e.target.value)} required data-testid="input-new" /></Field>
+    <Field label="Repeat new password"><Input type="password" autoComplete="new-password" value={n2} onChange={(e) => setN2(e.target.value)} required data-testid="input-new2" /></Field>
+    {err && <p className="text-sm text-destructive">{err}</p>}<Button className="w-full" data-testid="button-setpw">Save password</Button></form></Card></div>;
+}
+
+function Privacy() {
+  const { data: p } = useQuery<any>({ queryKey: ["/api/privacy"] });
+  return <Shell public><article className="max-w-2xl mx-auto space-y-4 text-sm leading-relaxed">
+    <h1 className="text-xl font-semibold">Privacy notice</h1>
+    <p className="text-muted-foreground">Protection of Personal Information Act 4 of 2013 (POPIA), section 18 notification.</p>
+    <h2 className="font-semibold text-base">Who is responsible</h2><p>{p?.responsibleParty || "The receiving hospital"} is the responsible party for referrals sent through TransferDesk.
+      Information Officer: {p?.infoOfficer || "to be confirmed"}{p?.infoOfficerEmail && <>, <a className="underline" href={`mailto:${p.infoOfficerEmail}`}>{p.infoOfficerEmail}</a></>}{p?.infoOfficerPhone && <>, {p.infoOfficerPhone}</>}.</p>
+    <h2 className="font-semibold text-base">What we collect and why</h2><p>The referring clinician's name, facility and contact details, and the minimum clinical information about the patient needed to decide on and arrange a transfer or consultation: initials, age, sex, folder number (optional), diagnosis, history, examination, investigations and the facility's location (optional). Patient names and ID numbers are not collected. Health information is processed by healthcare professionals for the patient's proper treatment and care (POPIA section 32(1)(a)).</p>
+    <h2 className="font-semibold text-base">Who can see it</h2><p>The global administrator has access across MEU, TEU and SEU. Clinicians and consultants can access only referrals for their assigned unit. The referring doctor can access the response history and images using the reference and private follow-up code; anyone given that code has access to that referral, so keep it private. Case access, responses and WhatsApp draft openings are logged. A WhatsApp draft opening is not proof of delivery.</p>
+    <h2 className="font-semibold text-base">Images, updates and notifications</h2><p>Clinical images and follow-up updates are stored with the referral. Images are additionally encrypted before storage. Remove patient names, IDs and faces before uploading. Image previews are resized and should not replace original diagnostic studies. First opening is recorded in the secure portal; browser notifications work while the portal is open, and an opened receipt does not indicate acceptance for transfer.</p>
+    <h2 className="font-semibold text-base">How it is protected</h2><p>Encrypted connections (HTTPS), an encrypted database, individual passwords stored as one-way hashes, automatic sign-out after 30 minutes of inactivity, account lock-out after repeated failed sign-ins, and an audit log that can only be added to, never changed.</p>
+    <h2 className="font-semibold text-base">How long it is kept</h2><p>TransferDesk is a communication tool, not the medical record; the clinical record stays in the patient's hospital folder. Clinical details are automatically deleted {p?.retentionDays || 90} days after a referral is submitted. A minimal non-clinical record (reference number, facilities, dates, outcome) is kept for audit.</p>
+    <h2 className="font-semibold text-base">Where it is stored</h2><p>The database is hosted in Frankfurt, Germany. The hospital must approve the applicable cross-border transfer basis, operator agreements, retention policy and hosting before real patient data is used. Technical safeguards alone are not certification of POPIA compliance.</p>
+    <h2 className="font-semibold text-base">Your rights</h2><p>Patients and referring clinicians may ask to see, correct or delete their information, object to processing, or complain to the Information Officer above, or to the Information Regulator (South Africa): <a className="underline" href="https://inforegulator.org.za" target="_blank" rel="noreferrer">inforegulator.org.za</a>, complaints.IR@inforegulator.org.za.</p>
+  </article></Shell>;
+}
+
+/* ---------- ALERT ENGINE ---------- */
+function useAlerts(me: string, st: AlertSettings) {
+  const { data = [] } = useQuery<Referral[]>({ queryKey: ["/api/referrals"], refetchInterval: 10000 });
+  const [tick, setTick] = useState(0);
+  useEffect(() => { const t = setInterval(() => setTick(x => x + 1), 15000); return () => clearInterval(t); }, []);
+  const seen = useRef<Set<number> | null>(null); const lastRem = useRef<Record<number, number>>({}); const lastAlarm = useRef(0);
+  const followupNotified=useRef<Record<number,string>>({});
+  const p1 = data.filter(r => r.priority === "P1" && r.status === "pending" && !r.ackAt);
+  const due = data.filter(r => isOverdue(r, st));
+  useEffect(() => {
+    if (!data.length && seen.current === null) return;
+    if (seen.current === null) { seen.current = new Set(data.map(r => r.id)); }
+    else for (const r of data) if (!seen.current.has(r.id)) { seen.current.add(r.id);
+      if (r.priority !== "P1") { if (st.sound) sounds.chime(); notify(`New ${r.priority} referral`, `${r.ref} · ${r.team}`, "new-" + r.id); }
+      else notify("P1 REFERRAL – action now", `${r.ref} · ${r.team}`, "p1-" + r.id, true); }
+    for(const r of data) if(r.latestFollowupAt && (!r.followupSeenAt || r.latestFollowupAt>r.followupSeenAt) && followupNotified.current[r.id]!==r.latestFollowupAt) {
+      followupNotified.current[r.id]=r.latestFollowupAt; if(st.sound)sounds.chime();notify("New referral follow-up",`${r.ref} · ${r.team}`,"followup-"+r.id);
+    }
+    const now = Date.now();
+    if (p1.length && now - lastAlarm.current > 20000) { lastAlarm.current = now; if (st.sound) sounds.alarm(); }
+    let rem = false;
+    for (const r of due) if (!(r.priority === "P1" && !r.ackAt) && now - (lastRem.current[r.id] || 0) > st.repeat * 60000) { lastRem.current[r.id] = now; rem = true;
+      notify(r.status === "waiting" ? "Waiting-list reminder" : `Overdue ${r.priority} consult`, `${r.ref} · ${r.team} · ${ago(r.createdAt)}`, "rem-" + r.id); }
+    if (rem && st.sound) sounds.reminder();
+  }, [data, tick, st]);
+  return { p1, due, data };
+}
+
+function P1Alarm({ list, me, onOpen }: { list: Referral[]; me: string; onOpen: (r: Referral) => void }) {
+  const ack = useMutation({ mutationFn: async (id: number) => apiRequest("PATCH", `/api/referrals/${id}`, { ack: me }), onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/referrals"] }) });
+  if (!list.length) return null;
+  return <div className="fixed inset-0 z-50 bg-red-950/70 grid place-items-center p-4" role="alertdialog" aria-label="P1 referral alert">
+    <Card className="w-full max-w-lg p-6 space-y-4 border-red-600 border-2 animate-in zoom-in-95">
+      <div className="flex items-center gap-3 text-red-600"><Siren className="h-8 w-8 animate-pulse" /><div><p className="text-lg font-bold">P1 referral{list.length > 1 ? `s (${list.length})` : ""}</p><p className="text-sm text-muted-foreground">Needs immediate review. Alarm repeats until someone acknowledges.</p></div></div>
+      {list.map(r => <div key={r.id} className="rounded-md border p-3 space-y-2"><p className="font-semibold">{r.diagnosis} <span className="font-normal text-muted-foreground">{r.patientInitials}, {r.age}{r.sex}</span></p>
+        <p className="text-sm text-muted-foreground">Dr {r.doctorName.replace(/^dr\.?\s*/i,"")} · {r.hospital} · {ago(r.createdAt)}</p>
+        <div className="flex gap-2"><Button className="bg-red-600 hover:bg-red-700 text-white flex-1" onClick={() => { ack.mutate(r.id); onOpen(r); }} data-testid={`button-ack-${r.id}`}>Acknowledge and open</Button>
+        <a href={`tel:${r.phone}`}><Button variant="outline"><Phone className="h-4 w-4 mr-1" />Call</Button></a></div></div>)}
+    </Card></div>;
+}
+
+function SettingsSheet({ open, onClose, st, setSt, due, onOpen, admin }: any) {
+  const set = (k: keyof AlertSettings) => (e: any) => { const v = { ...st, [k]: k === "sound" ? !st.sound : Math.max(1, Number(e.target.value) || 1) }; if (k !== "sound" && !admin) return; setSt(v); if (admin) apiRequest("PUT", "/api/settings", v).catch(() => {}); };
+  const perm = canNotify() ? Notification.permission : "unsupported";
+  return <Sheet open={open} onOpenChange={(o) => !o && onClose()}><SheetContent className="w-full sm:max-w-md overflow-y-auto"><SheetHeader><SheetTitle>Alerts and reminders</SheetTitle></SheetHeader>
+    <div className="space-y-5 mt-4">
+      <div className="space-y-2"><p className="text-sm font-semibold">Needs attention ({due.length})</p>
+        {due.length === 0 ? <p className="text-sm text-muted-foreground">Nothing overdue.</p> : due.map((r: Referral) => <button key={r.id} onClick={() => { onClose(); onOpen(r); }} className="w-full text-left rounded-md border p-2 hover-elevate flex gap-2 items-center"><span className={`rounded px-1.5 py-0.5 text-xs font-bold ${pColor[r.priority]}`}>{r.priority}</span><span className="text-sm flex-1 truncate">{r.diagnosis} · {r.hospital}</span><span className="text-xs text-muted-foreground">{r.status === "waiting" ? "reminder" : ago(r.createdAt)}</span></button>)}</div>
+      <div className="space-y-3 border-t pt-4"><p className="text-xs text-muted-foreground">These thresholds are shared by the whole team{admin ? "" : " and can be changed by an admin"}.</p><p className="text-sm font-semibold">Remind me if a new consult is not actioned within (minutes)</p>
+        <div className="grid grid-cols-3 gap-2">{(["p1","p2","p3"] as const).map(k => <Field key={k} label={k.toUpperCase()}><Input type="number" min={1} value={st[k]} onChange={set(k)} disabled={!admin} /></Field>)}</div>
+        <Field label="Repeat reminders every (minutes)"><Input type="number" min={1} value={st.repeat} onChange={set("repeat")} disabled={!admin} /></Field>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={st.sound} onChange={set("sound")} /> Play sounds</label>
+        <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => { unlockAudio(); sounds.alarm(); }}>Test P1 alarm</Button><Button size="sm" variant="outline" onClick={() => { unlockAudio(); sounds.reminder(); }}>Test reminder</Button></div>
+        <p className="text-xs text-muted-foreground">Browser notifications: {perm}. {perm !== "granted" && perm !== "unsupported" && <button className="underline" onClick={() => askNotify()}>Enable</button>} Alerts work while this dashboard is open on a phone or computer; keep one device signed in on the on-call desk.</p>
+      </div></div></SheetContent></Sheet>;
+}
+
+/* ---------- QUEUE ---------- */
+const order = { pending: 0, waiting: 1, accepted: 2, advised:2, declined: 3 }; const pr = { P1: 0, P2: 1, P3: 2 };
+function Queue({ me, data, st, onOpen, user }: { me: string; data: Referral[]; st: AlertSettings; onOpen: (r: Referral) => void; user:Me }) {
+  const isLoading = false; const { data: specs } = useSpecs();
+  const [tab, setTab] = useState("open"); const [q, setQ] = useState(""); const [sp, setSp] = useState("all"); const [unit,setUnit]=useState(user.team||"all"); const { toast } = useToast();
+  const hasUpdate=(r:Referral)=>!!r.latestFollowupAt && (!r.followupSeenAt || r.latestFollowupAt>r.followupSeenAt);
+  const list = useMemo(() => data.filter(r=>unit==="all"||r.team===unit).filter(r => tab==="all" || (tab==="open" ? ["pending","waiting"].includes(r.status)||hasUpdate(r) : r.status===tab))
+    .filter(r => sp === "all" || r.specialty === sp)
+    .filter(r => !q || JSON.stringify(r).toLowerCase().includes(q.toLowerCase()))
+    .sort((a,b) => Number(hasUpdate(b))-Number(hasUpdate(a)) || order[a.status]-order[b.status] || pr[a.priority]-pr[b.priority] || a.createdAt.localeCompare(b.createdAt)), [data, tab, q, sp,unit]);
+  const count = (s: string) => data.filter(r => r.status===s).length;
+  const overdue = data.filter(r => isOverdue(r, st));
+  const link=referLink(unit==="all"?undefined:unit);
+  const shareMsg = `Hi, please submit your ${unit==="all"?"":unit+" "}referral here: ${link}`;
+  const usedSpecs = Array.from(new Set(data.map(r => r.specialty).filter(Boolean)));
+  return <div className="space-y-5">
+    <div className="flex gap-3 flex-wrap items-center"><h1 className="text-xl font-semibold">{user.role==="admin"?"All-unit referral desk":`${user.team||"Unassigned"} referral desk`}</h1>{user.role==="admin" && <div className="w-64"><TeamSelect value={unit} onChange={setUnit} all/></div>}</div>
+    {user.role!=="admin" && !user.team && <Card className="p-4 text-sm border-amber-500">No unit assigned. Ask the global administrator to assign your account to MEU, TEU or SEU.</Card>}
+    {overdue.length > 0 && <Card className="p-3 border-amber-500 bg-amber-50 dark:bg-amber-950 flex items-center gap-3"><AlarmClock className="h-5 w-5 text-amber-600 shrink-0" /><p className="text-sm flex-1"><b>{overdue.length}</b> consult{overdue.length > 1 ? "s need" : " needs"} attention: {overdue.slice(0, 3).map(r => `${r.priority} ${r.diagnosis}`).join(", ")}{overdue.length > 3 ? "..." : ""}</p><Button size="sm" variant="outline" onClick={() => onOpen(overdue[0])}>Review</Button></Card>}
+    <Card className="p-4 flex flex-col sm:flex-row gap-3 sm:items-center"><div className="flex-1 min-w-0"><p className="text-sm font-medium">Referral link to send callers</p><p className="text-xs text-muted-foreground truncate font-mono">{link}</p></div>
+      <div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => { navigator.clipboard?.writeText(link); toast({ title: "Link copied" }); }} data-testid="button-copy-link"><Copy className="h-4 w-4 mr-1" />Copy</Button>
+      <a href={`https://wa.me/?text=${encodeURIComponent(shareMsg)}`} target="_blank" rel="noreferrer"><Button size="sm" data-testid="button-wa-link"><MessageCircle className="h-4 w-4 mr-1" />Send via WhatsApp</Button></a></div></Card>
+    <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">{[["New","pending"],["Waiting","waiting"],["Accepted","accepted"],["Declined","declined"]].map(([l,s]) => <Card key={s} className="p-4"><p className="text-xs text-muted-foreground">{l}</p><p className="text-xl font-semibold tabular-nums" data-testid={`stat-${s}`}>{count(s)}</p></Card>)}
+      <Card className="p-4 col-span-2 sm:col-span-1"><p className="text-xs text-muted-foreground">Overdue</p><p className={`text-xl font-semibold tabular-nums ${overdue.length ? "text-amber-600" : ""}`} data-testid="stat-overdue">{overdue.length}</p></Card></div>
+    <div className="flex flex-col md:flex-row gap-3 md:items-center justify-between"><Tabs value={tab} onValueChange={setTab}><TabsList><TabsTrigger value="open">Open</TabsTrigger><TabsTrigger value="accepted">Accepted</TabsTrigger><TabsTrigger value="advised">Advice</TabsTrigger><TabsTrigger value="declined">Declined</TabsTrigger><TabsTrigger value="all">All</TabsTrigger></TabsList></Tabs>
+      <div className="flex gap-2"><Select value={sp} onValueChange={setSp}><SelectTrigger className="w-48"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All specialties</SelectItem>{usedSpecs.map(s => <SelectItem key={s} value={s}>{specName(specs, s)}</SelectItem>)}</SelectContent></Select>
+      <div className="relative sm:w-56"><Search className="h-4 w-4 absolute left-2.5 top-2.5 text-muted-foreground" /><Input className="pl-8" placeholder="Search" value={q} onChange={(e) => setQ(e.target.value)} /></div></div></div>
+    {isLoading ? <div className="space-y-2">{[1,2,3].map(i => <Skeleton key={i} className="h-20" />)}</div> : list.length===0 ? <Card className="p-10 text-center text-muted-foreground">No referrals here. Send the link to a caller to get started.</Card> :
+    <div className="space-y-2">{list.map(r => { const od = isOverdue(r, st); return <Card key={r.id} data-testid={`card-referral-${r.id}`} onClick={() => onOpen(r)} className={`p-4 cursor-pointer hover-elevate flex gap-4 items-start ${r.priority === "P1" && r.status === "pending" ? "border-l-4 border-l-red-600" : od ? "border-l-4 border-l-amber-500" : ""}`}>
+      <span className={`rounded px-2 py-1 text-xs font-bold ${pColor[r.priority]}`}>{r.priority}</span>
+      <div className="flex-1 min-w-0"><div className="flex flex-wrap gap-x-2 items-center"><span className="font-semibold">{r.diagnosis}</span><span className="text-sm text-muted-foreground">{r.patientInitials}, {r.age}{r.sex}</span></div>
+        <p className="text-sm text-muted-foreground truncate">{specName(specs, r.specialty)} · Dr {r.doctorName.replace(/^dr\.?\s*/i,"")} · {r.hospital}</p>
+        <div className="flex flex-wrap gap-1.5 mt-1"><Badge variant="outline">{r.team||"Unassigned"}</Badge>{hasUpdate(r)&&<Badge className="bg-sky-700 text-white">New follow-up</Badge>}{r.consultType==="advice"&&<Badge variant="outline">Advice only</Badge>}{r.bedNeeded && <Badge variant="outline" className="font-normal"><BedDouble className="h-3 w-3 mr-1" />{r.bedNeeded}</Badge>}{r.bedStatus && r.bedStatus !== "Not assigned" && <Badge variant="outline" className="font-normal">{r.bedStatus}{r.bedWard && ` · ${r.bedWard}`}</Badge>}{r.status === "waiting" && r.remindAt && <Badge variant="outline" className="font-normal"><AlarmClock className="h-3 w-3 mr-1" />{new Date(r.remindAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</Badge>}</div>{r.decidedBy&&<p className="text-xs text-muted-foreground mt-1">Responded by {r.decidedBy}</p>}</div>
+      <div className="text-right shrink-0 space-y-1"><Badge className={sColor[r.status]}>{sLabel[r.status]}</Badge>{od && <Badge className="bg-amber-500 text-black ml-1">Overdue</Badge>}<p className="text-xs text-muted-foreground">{ago(r.createdAt)}</p></div></Card>; })}</div>}
+  </div>;
+}
+
+function ContactBtns({ c, msg, named, onShare }: { c: RosterContact; msg?: string; named?: boolean; onShare?: (to: string) => void }) {
+  return <span className="inline-flex gap-1 items-center flex-wrap">{named && <span className="text-xs text-muted-foreground mr-1">{c.name}</span>}{c.phone && <a href={`tel:${c.phone}`}><Button size="sm" variant="outline" className="h-7 px-2"><Phone className="h-3.5 w-3.5 mr-1" />{c.phone}</Button></a>}
+    {c.phone && /^0[6-8]/.test(c.phone.replace(/\D/g, "")) && <a href={`https://wa.me/${waNum(c.phone)}${msg ? `?text=${encodeURIComponent(msg)}` : ""}`} target="_blank" rel="noreferrer" onClick={() => msg && onShare?.(`${c.name} ${c.phone}`)}><Button size="sm" variant="outline" className="h-7 px-2" aria-label="WhatsApp">{msg ? <><Send className="h-3.5 w-3.5 mr-1" />Forward</> : <MessageCircle className="h-3.5 w-3.5" />}</Button></a>}
+    {c.hash && <span className="text-xs font-mono text-muted-foreground">ext {c.hash}</span>}</span>;
+}
+
+function OnCallBox({ spec, msg, onShare, show }: { spec: string; msg: string; onShare?: (to: string) => void; show:boolean }) {
+  const { data, isLoading } = useQuery<{ specs: RosterSpec[]; date: string }>({ queryKey: [`/api/roster?spec=${spec}`], enabled: show && !!spec && spec !== "other" });
+  if(!show) return null;
+  if (!spec || spec === "other") return null;
+  if (isLoading) return <Skeleton className="h-20" />;
+  const s = data?.specs[0]; if (!s) return null;
+  return <Card className="p-3 space-y-2"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">On call today · {s.name}</p>
+    {s.entries.length === 0 ? <p className="text-sm text-muted-foreground">No roster entry for today ({s.period}). Check with switchboard.</p> :
+      s.entries.map((e, i) => <div key={i} className="text-sm"><span className="text-muted-foreground">{e.role}: </span><span className="font-medium">{e.text}</span>{e.contacts.map((c, j) => <div key={j} className="mt-1"><ContactBtns c={c} msg={msg} named={e.contacts.length > 1} onShare={onShare} /></div>)}</div>)}</Card>;
+}
+
+function CatchmentBox({ r, onSave }: { r: Referral; onSave: (lat: string, lon: string, src: string) => void }) {
+  const [q, setQ] = useState(r.hospital || ""); const [hits, setHits] = useState<any[] | null>(null); const [busy, setBusy] = useState(false); const [map, setMap] = useState(false); const [edit, setEdit] = useState(false);
+  useEffect(() => { setQ(r.hospital || ""); setHits(null); setMap(false); setEdit(false); }, [r.id]);
+  const find = async () => { setBusy(true); try { setHits(await (await apiRequest("GET", `/api/geocode?q=${encodeURIComponent(q)}`)).json()); } catch { setHits([]); } finally { setBusy(false); } };
+  const has = !!(r.lat && r.lon);
+  return <div className="border-t pt-2 space-y-2">
+    <div className="flex flex-wrap gap-2 items-center"><MapPin className="h-4 w-4 text-muted-foreground" /><span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">EMS catchment</span>
+      {has ? <><a href={catchUrl(r.lat, r.lon)} target="_blank" rel="noreferrer"><Button size="sm" variant="outline" data-testid="button-catchment">Check catchment<ExternalLink className="h-3 w-3 ml-1" /></Button></a>
+        <Button size="sm" variant="ghost" onClick={() => setMap(!map)}>{map ? "Hide map" : "Show map"}</Button><Button size="sm" variant="ghost" onClick={() => { setEdit(!edit); setHits(null); }}>{edit ? "Cancel" : "Change location"}</Button></>
+        : <span className="text-xs text-muted-foreground">No location shared. Look up the facility:</span>}</div>
+    {has && <p className="text-xs text-muted-foreground">{r.locSource || "Location on file"} ({r.lat}, {r.lon})</p>}
+    {(!has || edit) && <div className="space-y-2"><form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); find(); }}><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Facility name, e.g. Stretford CHC" data-testid="input-facility" /><Button size="sm" disabled={busy || q.trim().length < 3} data-testid="button-find-facility">{busy ? "Searching..." : "Find"}</Button></form>
+      {hits && hits.length === 0 && <p className="text-xs text-muted-foreground">No match. Try a nearby suburb or town name, or <a className="underline" href="https://catchments.medricsoftware.co.za/" target="_blank" rel="noreferrer">search on the catchment map</a> directly.</p>}
+      {hits && hits.map((h, i) => <div key={i} className="flex gap-2 items-start text-xs border rounded-md p-2"><div className="flex-1"><p>{h.name}</p><p className="text-muted-foreground">{h.health ? "Health facility" : h.kind}</p></div>
+        <Button size="sm" variant="outline" className="h-7" onClick={() => { onSave(h.lat, h.lon, "Looked up: " + h.name.slice(0, 150)); setHits(null); setEdit(false); setMap(true); }} data-testid={`button-use-hit-${i}`}>Use</Button></div>)}</div>}
+    {map && has && <iframe title="EMS catchment map" src={catchUrl(r.lat, r.lon)} className="w-full h-72 rounded-md border" />}
+  </div>;
+}
+
+function Detail({ r: lite, me, onClose, user }: { r: Referral|null; me: string; onClose: () => void; user:Me }) {
+  const { data: full, error:loadError } = useQuery<Referral & {timeline:Followup[]}>({ queryKey: [`/api/referrals/${lite?.id}`], enabled: !!lite, staleTime: 0, refetchInterval:15000 });
+  const r = lite ? (full && full.id === lite.id ? { ...full, ...lite, history: full.history, exam: full.exam, investigations: full.investigations, decisionNote: full.decisionNote, folderNo: full.folderNo, email: full.email } as Referral : lite) : null;
+  const [note, setNote] = useState(""); const [ward, setWard] = useState<string|null>(null); const [map, setMap] = useState(false); const { toast } = useToast(); const { data: specs } = useSpecs();
+  const m = useMutation({ mutationFn: async (u: any) => (await apiRequest("PATCH", `/api/referrals/${r!.id}`, u)).json(), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/referrals"] }); queryClient.invalidateQueries({ queryKey: [`/api/referrals/${lite?.id}`] }); },onError:e=>toast({title:messageOf(e),variant:"destructive"}) });
+  const [portalCode,setPortalCode]=useState("");
+  useEffect(() => { setWard(null); setMap(false); }, [r?.id]);
+  useEffect(() => { if (r && r.priority === "P1" && !r.ackAt) m.mutate({ ack: me }); }, [r?.id]);
+  if (!r) return null;
+  const dr = r.doctorName.replace(/^dr\.?\s*/i,"");
+  const bedTxt = r.bedStatus === "Bed allocated" || r.bedStatus === "Patient en route" ? ` Bed: ${r.bedWard || "allocated"}.` : r.bedStatus === "Bed requested" ? " A bed has been requested; we will confirm when allocated." : "";
+  const msg = (s: Status) => {
+    const base = `Dear Dr ${dr}, re: your TransferDesk referral ${r.ref} (patient ${r.patientInitials}).`;
+    const body = s==="accepted" ? ` The patient has been ACCEPTED by ${r.team}.${bedTxt} Please confirm transfer arrangements with the unit.` : s==="declined" ? " Unfortunately we are unable to accept this referral at this time." : s==="waiting" ? " This referral is on our WAITING list." : s==="advised" ? " Clinical advice is available in your secure follow-up portal. This is not an acceptance for transfer." : "";
+    return `${base}${body}${s!=="advised" && (note || r.decisionNote) ? ` Note: ${note || r.decisionNote}` : ""} - ${me}`;
+  };
+  const fwd = `TransferDesk: ${r.priority} ${specName(specs, r.specialty)} consult ${r.ref} from ${r.hospital} needs your review. Please sign in to TransferDesk to see the details: ${window.location.href.split("#")[0]} - ${me}`;
+  const logShare = (to: string) => apiRequest("POST", `/api/referrals/${r.id}/shared`, { to }).catch(() => {});
+  const decide = (s: Status) => { m.mutate({ status: s, decisionNote: note || r.decisionNote, decidedBy: me, ...(s === "waiting" && !r.remindAt ? { remindAt: new Date(Date.now() + 30 * 60000).toISOString() } : {}) },{onSuccess:()=>{toast({title:sLabel[s],description:"Saved to the referral and secure portal. Tap WhatsApp to notify the referrer."});setNote("");}}); };
+  const remind = (mn: number) => { m.mutate({ remindAt: new Date(Date.now() + mn * 60000).toISOString(), ...(r.status === "pending" ? { status: "waiting", decidedBy: me } : {}) }); toast({ title: `Reminder in ${mn >= 60 ? mn / 60 + " h" : mn + " min"}` }); };
+  const Sec = ({ t, v }: any) => <div><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t}</p><p className="text-sm whitespace-pre-wrap">{v || "-"}</p></div>;
+  return <Sheet open onOpenChange={(o) => { if (!o) { setNote(""); onClose(); } }}><SheetContent className="w-full sm:max-w-xl overflow-y-auto"><SheetHeader><SheetTitle className="flex items-center gap-2 pr-6"><span className={`rounded px-2 py-0.5 text-xs font-bold ${pColor[r.priority]}`}>{r.priority}</span>{r.diagnosis}</SheetTitle></SheetHeader>
+    <div className="space-y-5 mt-4">
+      {loadError&&<p className="text-sm text-destructive">Could not load this referral. Your unit access may have changed.</p>}
+      {user.role==="admin"&&<Field label="Receiving unit (global admin routing)"><TeamSelect value={r.team||""} onChange={team=>m.mutate({team})}/></Field>}
+      <div className="flex flex-wrap gap-2 items-center text-sm"><Badge className={sColor[r.status]}>{sLabel[r.status]}</Badge><span className="font-mono">{r.ref}</span><span className="text-muted-foreground">{new Date(r.createdAt).toLocaleString()}</span>{r.ackBy && <span className="text-xs text-muted-foreground">Seen by {r.ackBy}</span>}</div>
+      <p className="text-xs text-muted-foreground">{r.team||"Unassigned"} · {r.consultType==="advice"?"Advice-only consult":"Transfer request"}{r.openedBy?` · First opened by ${r.openedBy}`:""}</p>
+      <Card className="p-3 text-sm space-y-2"><p className="font-medium">Dr {dr}, {r.hospital}{r.department && ` (${r.department})`}</p>
+        <div className="flex flex-wrap gap-2"><a href={`tel:${r.phone}`}><Button size="sm" variant="outline"><Phone className="h-4 w-4 mr-1" />{r.phone}</Button></a>{r.email && <a href={`mailto:${r.email}`} className="text-sm underline self-center">{r.email}</a>}
+        </div>
+        <CatchmentBox r={r} onSave={(lat, lon, src) => m.mutate({ lat, lon, locSource: src })} /></Card>
+      <div className="grid grid-cols-3 gap-3 text-sm"><Sec t="Specialty" v={specName(specs, r.specialty)} /><Sec t="Patient in" v={r.currentLocation} /><Sec t="Bed needed" v={r.bedNeeded} />
+        <Sec t="Patient" v={`${r.patientInitials}, ${r.age} ${r.sex}`} /><Sec t="Folder" v={r.folderNo} /><Sec t="Suggested" v={r.suggestedPriority} /></div>
+      <Sec t="History" v={r.history} /><Sec t="Examination" v={r.exam} /><Sec t="Investigations" v={r.investigations} /><Sec t="Request" v={r.reason} />
+      <Images images={full?.images} referralId={r.id}/>
+      <div className="space-y-2"><h3 className="font-semibold text-sm">Updates and response history</h3><Timeline entries={full?.timeline} referralId={r.id}/></div>
+      <OnCallBox spec={r.specialty} msg={fwd} onShare={logShare} show={user.role==="admin"} />
+      <div className="border-t pt-4 space-y-3"><div className="flex items-center gap-3"><Label className="w-16">Priority</Label><div className="flex gap-1">{(["P1","P2","P3"] as const).map(p => <Button key={p} size="sm" variant={r.priority===p?"default":"outline"} onClick={() => m.mutate({ priority: p })} data-testid={`button-set-${p}`}>{p}</Button>)}</div></div>
+        <div className="flex flex-wrap items-center gap-2"><Label className="w-16">Bed</Label><Select value={r.bedStatus || "Not assigned"} onValueChange={(v) => m.mutate({ bedStatus: v })}><SelectTrigger className="w-44" data-testid="select-bedstatus"><SelectValue /></SelectTrigger><SelectContent>{BEDSTAT.map(b => <SelectItem key={b} value={b}>{b}</SelectItem>)}</SelectContent></Select>
+          <Input className="flex-1 min-w-[140px]" placeholder="Ward / bed no." value={ward ?? r.bedWard ?? ""} onChange={(e) => setWard(e.target.value)} onBlur={() => ward !== null && m.mutate({ bedWard: ward })} data-testid="input-bedward" /></div>
+        <Field label="Clinical advice / note to referring doctor"><Textarea rows={4} maxLength={5000} value={note} onChange={(e) => setNote(e.target.value)} placeholder={r.decisionNote || "Type clinical advice, treatment plan or transfer instructions"} data-testid="input-advice" /></Field>
+        <Button className="w-full" variant="outline" disabled={m.isPending||!note.trim()} onClick={()=>decide("advised")} data-testid="button-send-advice">Save and send advice to the secure portal (no transfer)</Button>
+        <div className="grid grid-cols-3 gap-2"><Button onClick={() => decide("accepted")} className="bg-emerald-600 hover:bg-emerald-700 text-white" data-testid="button-accept"><Check className="h-4 w-4 mr-1" />Accept</Button>
+          <Button variant="outline" onClick={() => decide("waiting")} data-testid="button-wait"><Clock className="h-4 w-4 mr-1" />Wait</Button>
+          <Button variant="destructive" onClick={() => decide("declined")} data-testid="button-decline"><X className="h-4 w-4 mr-1" />Decline</Button></div>
+        {(r.status === "pending" || r.status === "waiting") && <div className="flex flex-wrap items-center gap-1.5"><AlarmClock className="h-4 w-4 text-muted-foreground" /><span className="text-sm text-muted-foreground mr-1">Remind me in</span>{[15, 30, 60, 120].map(mn => <Button key={mn} size="sm" variant="outline" className="h-7 px-2" onClick={() => remind(mn)}>{mn >= 60 ? mn / 60 + "h" : mn + "m"}</Button>)}
+          {r.remindAt && <span className="text-xs text-muted-foreground">Set for {new Date(r.remindAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>}</div>}
+        {r.status!=="pending" && <a href={`https://wa.me/${waNum(r.phone)}?text=${encodeURIComponent(msg(r.status))}`} target="_blank" rel="noreferrer" onClick={() => logShare(`referring doctor ${r.phone}`)}><Button variant="secondary" className="w-full" data-testid="button-notify"><MessageCircle className="h-4 w-4 mr-1" />Notify Dr {dr} on WhatsApp</Button></a>}
+        <a href={`https://wa.me/${waNum(r.phone)}?text=${encodeURIComponent(`Your referral ${r.ref} has been opened by the ${r.team||"receiving"} team. This is an opened receipt, not acceptance for transfer. Please use your secure portal for updates.`)}`} target="_blank" rel="noreferrer" onClick={()=>logShare("opened receipt")}><Button variant="outline" className="w-full">WhatsApp: referral opened</Button></a>
+        {user.role!=="clinician"&&<div className="border rounded p-3 space-y-2"><p className="text-xs text-muted-foreground">Legacy referral or lost code? Verify the referring doctor's identity before resetting portal access.</p><Button size="sm" variant="outline" onClick={async()=>{try{const d=await(await apiRequest("POST",`/api/referrals/${r.id}/portal-reset`)).json();setPortalCode(d.code);}catch(e){toast({title:messageOf(e),variant:"destructive"});}}}>Generate new private follow-up code</Button>{portalCode&&<p className="font-mono text-xs break-all select-all">{portalCode}</p>}</div>}
+        {r.decidedBy && <p className="text-xs text-muted-foreground">Last update by {r.decidedBy}{r.decidedAt && `, ${ago(r.decidedAt)}`}</p>}
+      </div></div></SheetContent></Sheet>;
+}
+
+/* ---------- ON CALL ---------- */
+function OnCall({me}:{me:Me}) {
+  const sa = new Date(Date.now() + 2 * 3600e3).toISOString().slice(0, 10);
+  const [date, setDate] = useState(sa); const [g, setG] = useState("All"); const [q, setQ] = useState("");
+  const { data, isLoading } = useQuery<{ specs: RosterSpec[]; hospital: string; generated: string }>({ queryKey: [`/api/roster?date=${date}`],enabled:me.role==="admin" });
+  const specs = (data?.specs || []).filter(s => g === "All" || s.group === g).filter(s => !q || JSON.stringify(s).toLowerCase().includes(q.toLowerCase()));
+  return <div className="space-y-4"><div className="flex flex-wrap gap-3 items-end justify-between"><div><h1 className="text-xl font-semibold">On call</h1><p className="text-sm text-muted-foreground">{me.role==="admin" ? `${data?.hospital||"CHBAH"} · roster built ${data?.generated||"previously"}. Rosters change at short notice; confirm with switchboard when in doubt.` : `Your ${me.team} duty roster. Check with the unit consultant when shifts change.`}</p></div>
+    <div className="flex gap-2"><Input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} className="w-40" /><Button variant="outline" onClick={() => setDate(sa)}>Today</Button></div></div>
+    {(me.team||me.role==="admin")&&<UnitRoster me={me}/>}
+    {me.role==="admin"&&<><div className="flex flex-wrap gap-2 items-center">{["All", "Medicine", "Surgery", "Other", "Management"].map(x => <Button key={x} size="sm" variant={g === x ? "default" : "outline"} onClick={() => setG(x)}>{x}</Button>)}<Input className="sm:ml-auto sm:w-64" placeholder="Search specialty or name" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+    {isLoading ? <Skeleton className="h-60" /> : <div className="grid md:grid-cols-2 gap-3">{specs.map(s => <Card key={s.id} className="p-4 space-y-2"><div className="flex justify-between gap-2"><p className="font-semibold">{s.name}</p><span className="text-xs text-muted-foreground">{s.group}</span></div>
+      {s.entries.length === 0 ? <p className="text-sm text-muted-foreground">No roster for this date.</p> : s.entries.map((e, i) => <div key={i} className="text-sm border-t pt-2 first:border-0 first:pt-0"><p><span className="text-muted-foreground">{e.role}: </span><span className="font-medium">{e.text}</span></p>{e.contacts.map((c, j) => <div key={j} className="mt-1"><ContactBtns c={c} named={e.contacts.length > 1} /></div>)}</div>)}</Card>)}</div>}</>}
+  </div>;
+}
+
+function Catchments() {
+  const [ll, setLl] = useState<{ lat: string; lon: string } | null>(null); const [err, setErr] = useState("");
+  const here = () => navigator.geolocation?.getCurrentPosition((p) => setLl({ lat: p.coords.latitude.toFixed(6), lon: p.coords.longitude.toFixed(6) }), () => setErr("Location unavailable here; open the map in a new tab instead."));
+  const url = ll ? catchUrl(ll.lat, ll.lon) : "https://catchments.medricsoftware.co.za/";
+  return <div className="space-y-3"><div className="flex flex-wrap gap-2 items-center justify-between"><div><h1 className="text-xl font-semibold">EMS catchments</h1><p className="text-sm text-muted-foreground">Medric EMS catchment and pre-notification map. Referrals with a shared location open here directly.</p></div>
+    <div className="flex gap-2"><Button variant="outline" size="sm" onClick={here}><MapPin className="h-4 w-4 mr-1" />My location</Button><a href={url} target="_blank" rel="noreferrer"><Button size="sm"><ExternalLink className="h-4 w-4 mr-1" />Open full screen</Button></a></div></div>
+    {err && <p className="text-sm text-muted-foreground">{err}</p>}
+    <iframe key={url} title="Medric EMS catchments" src={url} className="w-full h-[70vh] rounded-md border bg-muted" allow="geolocation" /></div>;
+}
+
+function Doctors() {
+  const { data = [], isLoading } = useQuery<Doctor[]>({ queryKey: ["/api/doctors"] }); const [q, setQ] = useState("");
+  const l = data.filter(d => !q || JSON.stringify(d).toLowerCase().includes(q.toLowerCase()));
+  return <div className="space-y-4"><div className="flex justify-between items-center gap-3"><h1 className="text-xl font-semibold">Referring doctors</h1><Input className="max-w-xs" placeholder="Search name or hospital" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+    <p className="text-sm text-muted-foreground">Built automatically from submitted referrals. Hospital on-call contacts are on the On call page.</p>
+    {isLoading ? <Skeleton className="h-40" /> : <Card className="divide-y">{l.length===0 && <p className="p-6 text-center text-muted-foreground">No doctors yet.</p>}{l.map(d => <div key={d.phone} className="p-4 flex flex-wrap gap-3 items-center"><div className="flex-1 min-w-[200px]"><p className="font-medium">Dr {d.doctorName.replace(/^dr\.?\s*/i,"")}</p><p className="text-sm text-muted-foreground">{d.hospital}{d.department && ` · ${d.department}`} · {d.count} referral{d.count>1?"s":""}</p></div>
+      <a href={`tel:${d.phone}`}><Button size="sm" variant="outline"><Phone className="h-4 w-4 mr-1" />{d.phone}</Button></a><a href={`https://wa.me/${waNum(d.phone)}`} target="_blank" rel="noreferrer"><Button size="sm" variant="outline" aria-label="WhatsApp"><MessageCircle className="h-4 w-4" /></Button></a>{d.email && <a className="text-sm underline" href={`mailto:${d.email}`}>{d.email}</a>}</div>)}</Card>}</div>;
+}
+
+function Desk({ user, onLogout }: { user: Me; onLogout: () => void }) {
+  const me = user.name; const admin = user.role === "admin"; const manager=admin||user.role==="unit_admin";
+  const [st, setSt] = useState<AlertSettings>(defaultSettings); const [settings, setSettings] = useState(false); const [openId, setOpenId] = useState<number|null>(null);
+  useEffect(() => { apiRequest("GET", "/api/settings").then(r => r.json()).then(v => v && setSt({ ...defaultSettings, ...v })).catch(() => {}); }, []);
+  const { p1, due, data } = useAlerts(me, st);
+  useEffect(() => { document.title = (p1.length ? `(${p1.length}) P1! ` : due.length ? `(${due.length}) ` : "") + "TransferDesk"; }, [p1.length, due.length]);
+  const open = (r: Referral) => setOpenId(r.id);
+  return <Shell me={me} admin={manager} onLogout={onLogout} alertCount={p1.length + due.length} onSettings={() => setSettings(true)}>
+    <Switch><Route path="/oncall"><OnCall me={user}/></Route><Route path="/catchments" component={Catchments} /><Route path="/doctors" component={Doctors} />
+      <Route path="/admin">{manager ? <Admin me={user} /> : <Card className="p-6">Admins only.</Card>}</Route><Route><Queue me={me} user={user} data={data} st={st} onOpen={open} /></Route></Switch>
+    <P1Alarm list={openId ? p1.filter(r => r.id !== openId) : p1} me={me} onOpen={open} />
+    <SettingsSheet open={settings} onClose={() => setSettings(false)} st={st} setSt={setSt} due={due} onOpen={open} admin={admin} />
+    <Detail key={openId} r={openId ? data.find(x => x.id === openId) || null : null} me={me} user={user} onClose={() => {setOpenId(null);queryClient.invalidateQueries({queryKey:["/api/referrals"]});}} />
+  </Shell>;
+}
+
+function Private() {
+  const [user, setUser] = useState<Me|null>(null); const [expired, setExpired] = useState(false);
+  useEffect(() => { session.onExpire = () => { setUser(null); setExpired(true); queryClient.clear(); }; }, []);
+  const logout = async () => { try { await apiRequest("POST", "/api/me/logout"); } catch {} session.token = ""; queryClient.clear(); setUser(null); };
+  if (!user) return <>{expired && <div className="fixed top-3 inset-x-0 z-50 flex justify-center"><div className="bg-amber-100 text-amber-900 text-sm rounded-md px-3 py-2 shadow">You were signed out after inactivity.</div></div>}<Login onIn={(u) => { setExpired(false); setUser(u); }} /></>;
+  if (user.mustChange) return <ChangePassword me={user} onDone={() => setUser({ ...user, mustChange: false })} />;
+  return <Desk user={user} onLogout={logout} />;
+}
+
+export default function App() {
+  return <QueryClientProvider client={queryClient}><Toaster /><Router hook={useHashLocation}><Switch>
+    <Route path="/refer/:team" component={ReferPage}/><Route path="/refer" component={ReferPage} /><Route path="/followup"><Shell public><ReferrerPortal/></Shell></Route><Route path="/privacy" component={Privacy} /><Route path="/status/:ref" component={StatusPage} /><Route path="/status" component={StatusPage} /><Route path="/portal"><Shell public><Portal/></Shell></Route><Route path="/login"><Login onIn={() => { window.location.hash = "#/"; }} /></Route><Route path="/" component={Landing} /><Route component={Private} />
+  </Switch></Router></QueryClientProvider>;
+}

@@ -1,0 +1,12 @@
+# --- Test / Seed Surnames (Safe To Remove) ---
+# One Uppercase Surname Per Line; # Lines Are Comments.
+# So The Next Refresh Automatically Covers Them.
+# Surnames To Refresh From Hpcsa Iregister On Each 14-Day Scrape.
+# The App Appends Surnames Here When A Referrer Signup Cannot Be Verified,
+BERG
+BOTHA
+DUBE
+KNAUER
+NAIDOO
+NGOAKOANA
+NOONE

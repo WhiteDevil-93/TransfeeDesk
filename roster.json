@@ -1,0 +1,383 @@
+{
+  "hospital": "Chris Hani Baragwanath Academic Hospital",
+  "generated": "sanitized-source-export",
+  "specialties": [
+    {
+      "id": "med-consultant",
+      "name": "Medicine – Consultant on Call",
+      "group": "Medicine",
+      "period": "Not configured",
+      "roles": [
+        "Intake unit",
+        "Consultant on call"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    },
+    {
+      "id": "med-registrar",
+      "name": "Medicine – Registrar Covers",
+      "group": "Medicine",
+      "period": "Not configured",
+      "roles": [
+        "Intake unit",
+        "MACU day",
+        "MACU day (from 15h00)",
+        "MACU night",
+        "Ward 20 day",
+        "Ward 20 night",
+        "Surg – Tsitsi Unit 1 (HPB)",
+        "Surg – Ickinger Unit 3 (Colorectal) + Burns",
+        "Surg – Makan ACSU",
+        "Surg – Peter Unit 4 (Breast) + Vascular",
+        "Day 2 cover (Neurosurg/St Johns/ENT/Uro/Ortho/MaxFac/other surg)",
+        "Day 3 cover (O&G and Psych)",
+        "Alekar Unit 5 (Endocrine/Upper GIT) + Trauma"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    },
+    {
+      "id": "macu",
+      "name": "MACU / Short Stay Ward – Consultants",
+      "group": "Medicine",
+      "period": "Not configured",
+      "roles": [
+        "Consultant 1",
+        "Consultant 2"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    },
+    {
+      "id": "ward-call",
+      "name": "Medicine – Intern Ward Call",
+      "group": "Medicine",
+      "period": "Not configured",
+      "roles": [
+        "Intake unit",
+        "Ward call unit",
+        "CHBAH ward call intern (16h00–07h00)",
+        "ABT Hospital intern (19h00–07h00)"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    },
+    {
+      "id": "cardiology",
+      "name": "Cardiology",
+      "group": "Medicine",
+      "period": "Not configured",
+      "roles": [
+        "Call",
+        "CCU",
+        "Cath lab",
+        "Leave"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    },
+    {
+      "id": "dermatology",
+      "name": "Dermatology",
+      "group": "Medicine",
+      "period": "Not configured",
+      "roles": [
+        "Registrar / doctor on call",
+        "Consultant"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    },
+    {
+      "id": "ent",
+      "name": "ENT (Otorhinolaryngology)",
+      "group": "Surgery",
+      "period": "Not configured",
+      "roles": [
+        "1st call CHB / RMMC (Coro)",
+        "1st call CMJAH / HJH",
+        "2nd call – Senior registrar",
+        "3rd call – Specialist"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    },
+    {
+      "id": "endocrinology",
+      "name": "Endocrinology",
+      "group": "Medicine",
+      "period": "Not configured",
+      "roles": [
+        "On call (Reg/MO)",
+        "Specialist",
+        "Clinics"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    },
+    {
+      "id": "gastro",
+      "name": "Gastroenterology (GIT)",
+      "group": "Medicine",
+      "period": "Not configured",
+      "roles": [
+        "Endoscopy on call till 4pm",
+        "Endoscopy on call after 4pm",
+        "Ward consult till 4pm (onsite)",
+        "On call after 4pm (offsite)",
+        "Consultant on call (onsite & offsite)"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    },
+    {
+      "id": "haematology",
+      "name": "Haematology",
+      "group": "Medicine",
+      "period": "Not configured",
+      "roles": [
+        "Cover / new consults (MO/Reg)",
+        "Week consultant",
+        "Consultant call 1",
+        "Consultant call 2"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    },
+    {
+      "id": "id",
+      "name": "Infectious Diseases",
+      "group": "Medicine",
+      "period": "Not configured",
+      "roles": [
+        "MO/Reg on cover / PEP cover",
+        "Consultant cover"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    },
+    {
+      "id": "neurology",
+      "name": "Neurology",
+      "group": "Medicine",
+      "period": "Not configured",
+      "roles": [
+        "Registrar on call",
+        "Consultant on call"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    },
+    {
+      "id": "neurosurgery",
+      "name": "Neurosurgery",
+      "group": "Surgery",
+      "period": "Not configured",
+      "roles": [
+        "1st call",
+        "2nd call",
+        "Senior call",
+        "Consultant",
+        "Ward 7"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    },
+    {
+      "id": "orthopaedics",
+      "name": "Orthopaedics",
+      "group": "Surgery",
+      "period": "Not configured",
+      "roles": [
+        "Interns",
+        "MO",
+        "Reg – consults / casualty",
+        "Reg 2 – Theatre 10",
+        "Reg 3",
+        "Consultant",
+        "Senior consultant"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    },
+    {
+      "id": "paeds-surgery",
+      "name": "Paediatric Surgery",
+      "group": "Surgery",
+      "period": "Not configured",
+      "roles": [
+        "On call",
+        "Cover",
+        "Registrar",
+        "Consultant"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    },
+    {
+      "id": "plastics",
+      "name": "Plastic & Reconstructive Surgery",
+      "group": "Surgery",
+      "period": "Not configured",
+      "roles": [
+        "Day cover (08:00–16:00)",
+        "Call (16:00–08:00)",
+        "Consultant"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    },
+    {
+      "id": "psychiatry",
+      "name": "Psychiatry",
+      "group": "Other",
+      "period": "Not configured",
+      "roles": [
+        "Doctor on call",
+        "Doctor on call – casualty",
+        "Doctor second on call",
+        "Consultant on call"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    },
+    {
+      "id": "renal",
+      "name": "Nephrology (Renal Unit)",
+      "group": "Medicine",
+      "period": "Not configured",
+      "roles": [
+        "Reg/MO on call",
+        "Reg/MO weekend ward round (07h00–16h00)",
+        "Consultant call 1 / Fellow",
+        "Consultant 2",
+        "Leave"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    },
+    {
+      "id": "respiratory",
+      "name": "Pulmonology (Respiratory)",
+      "group": "Medicine",
+      "period": "Not configured",
+      "roles": [
+        "Reg/MO on call",
+        "Consultant on call",
+        "ICU (Resp)",
+        "Leave"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    },
+    {
+      "id": "rheumatology",
+      "name": "Rheumatology",
+      "group": "Medicine",
+      "period": "Not configured",
+      "roles": [
+        "Doctor on cover",
+        "Infusion cover & procedures",
+        "Consultant call 1",
+        "Consultant call 2"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    },
+    {
+      "id": "urology",
+      "name": "Urology",
+      "group": "Surgery",
+      "period": "Not configured",
+      "roles": [
+        "On call"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    },
+    {
+      "id": "general-surgery",
+      "name": "General Surgery (Acute Care)",
+      "group": "Surgery",
+      "period": "Not configured",
+      "roles": [
+        "Unit on call",
+        "Senior registrar on call",
+        "Consultant on call"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    },
+    {
+      "id": "maxfac",
+      "name": "Maxillofacial & Oral Surgery",
+      "group": "Surgery",
+      "period": "Not configured",
+      "roles": [
+        "On call (CHBAH)"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    },
+    {
+      "id": "clinical-director",
+      "name": "Clinical Director on Call",
+      "group": "Management",
+      "period": "Not configured",
+      "roles": [
+        "Clinical director"
+      ],
+      "notes": [],
+      "contacts": [],
+      "consults": [],
+      "days": {}
+    }
+  ]
+}
