@@ -17,9 +17,14 @@ barabridge.84-12-115-40.sslip.io {
 }
 
 transferdesk.84-12-115-40.sslip.io {
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+    }
     route {
-        @api path /api/*
-        handle @api {
+        @compat path /api/* /sw.js /registerSW.js /manifest.webmanifest /index.html /assets/* /favicon.png /icon-192.png /icon-512.png
+        handle @compat {
             reverse_proxy 127.0.0.1:5000
         }
         handle {
