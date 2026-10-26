@@ -46,9 +46,9 @@ const DELAY_MS = 2000; // politeness between requests
 // The bundle compiles to CJS (no import.meta), so resolve the checklist
 // against the project root via process.cwd() — production and dev both run
 // from the repo root (see npm scripts).
-export const CHECKLIST = path.resolve(process.cwd(), "script", "hpcsa_surnames.txt");
+export const CHECKLIST = process.env.HPCSA_CHECKLIST || path.resolve(process.cwd(), "script", "hpcsa_surnames.txt");
 // Resume state for --bulk sweeps: which letters have already been fetched.
-const BULK_STATE = path.resolve(process.cwd(), "script", "hpcsa_bulk_state.json");
+const BULK_STATE = process.env.HPCSA_BULK_STATE || path.resolve(process.cwd(), "script", "hpcsa_bulk_state.json");
 
 export interface Row {
   title: string;
@@ -121,10 +121,11 @@ export async function searchIRegister(surname: string, wildcard: boolean): Promi
 }
 
 function makeClient() {
-  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY || !process.env.APP_DB_SECRET) {
+  const apiKey = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY;
+  if (!process.env.SUPABASE_URL || !apiKey || !process.env.APP_DB_SECRET) {
     throw new Error("SUPABASE_URL / SUPABASE_ANON_KEY / APP_DB_SECRET must be set");
   }
-  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, {
+  return createClient(process.env.SUPABASE_URL, apiKey, {
     auth: { persistSession: false },
     global: { headers: { "x-app-secret": process.env.APP_DB_SECRET } },
   });

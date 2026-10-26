@@ -16,8 +16,8 @@ let surnameQueueBusy = false;
 async function queueSurnameForRefresh(fullName: string) {
   const surname = (fullName.trim().split(/\s+/).pop() || fullName).toUpperCase();
   if (!surname) return;
-  appendChecklistSurnames(surname);
   try {
+    appendChecklistSurnames(surname);
     if (surnameQueueBusy) return;
     surnameQueueBusy = true;
     const rows = await searchIRegister(surname, true);

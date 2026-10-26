@@ -5,6 +5,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
 import { runBulkExport } from "../script/hpcsa-scrape";
+import { sb } from "./db";
 
 const app = express();
 const httpServer = createServer(app);
@@ -70,13 +71,24 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  app.get("/api/health", async (_req, res) => {
+    try {
+      const { data, error } = await sb.rpc("is_app_server").abortSignal(AbortSignal.timeout(5000));
+      const ready = !error && data === true;
+      res.status(ready ? 200 : 503).json({ status: ready ? "ready" : "unavailable" });
+    } catch {
+      res.status(503).json({ status: "unavailable" });
+    }
+  });
   await registerRoutes(httpServer, app);
+  app.use("/api", (_req, res) => res.status(404).json({ message: "Not found" }));
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+    const candidate = Number(err.status || err.statusCode || 500);
+    const status = candidate >= 400 && candidate < 600 ? candidate : 500;
+    const message = status >= 500 ? "Internal Server Error" : "Request rejected";
 
-    console.error("Internal Server Error:", err);
+    console.error("Request failed:", status);
 
     if (res.headersSent) {
       return next(err);
@@ -116,8 +128,10 @@ app.use((req, res, next) => {
       hpcsaBusy = false;
     }
   };
-  const hpcsaTimer = setInterval(hpcsaRefresh, HPCSA_REFRESH_MS);
-  hpcsaTimer.unref();
+  if (process.env.HPCSA_AUTO_REFRESH !== "0") {
+    const hpcsaTimer = setInterval(hpcsaRefresh, HPCSA_REFRESH_MS);
+    hpcsaTimer.unref();
+  }
   // HPCSA_NOW=1 forces a refresh shortly after boot (dev/testing).
   if (process.env.HPCSA_NOW === "1") setTimeout(hpcsaRefresh, 15000);
 
@@ -132,7 +146,7 @@ app.use((req, res, next) => {
   httpServer.listen(
     {
       port,
-      host: "0.0.0.0",
+      host: process.env.HOST || "127.0.0.1",
       reusePort,
     },
     () => {

@@ -5,7 +5,7 @@ import type { Referral, ReferralInput, Doctor, User, AuditRow, AppSettings, Foll
 import { type Team } from "@shared/teams";
 
 if(!process.env.APP_DB_SECRET || process.env.APP_DB_SECRET.length<32) throw new Error("Server database secret is not configured");
-export const sb = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_ANON_KEY!, { auth: { persistSession: false }, realtime: { transport: ws as any }, global: { headers: { "x-app-secret": process.env.APP_DB_SECRET || "" } } });
+export const sb = createClient(process.env.SUPABASE_URL!, (process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY)!, { auth: { persistSession: false }, realtime: { transport: ws as any }, global: { headers: { "x-app-secret": process.env.APP_DB_SECRET || "" } } });
 const snake = (k: string) => k.replace(/[A-Z]/g, (c) => "_" + c.toLowerCase());
 const camel = (k: string) => k.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
 const toCamel = (o: any) => o && Object.fromEntries(Object.entries(o).map(([k, v]) => [camel(k), v]));

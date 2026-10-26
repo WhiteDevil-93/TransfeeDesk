@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TransferDesk secure setup</title>
+<style>body{font:17px system-ui;max-width:520px;margin:48px auto;padding:24px;color:#142b3b;background:#f5f8fa}label,input,button{display:block;width:100%;box-sizing:border-box}input,button{font:inherit;padding:14px;margin-top:12px;border-radius:8px;border:1px solid #718599}button{background:#075985;color:white;cursor:pointer}#result{white-space:pre-wrap;line-height:1.5}small{display:block;margin:20px 0;line-height:1.5}</style>
+<h1>TransferDesk secure setup</h1>
+<p>Enter the <strong>existing APP_DB_SECRET</strong> from your original TransferDesk server. This verifies access without changing database policies or records.</p>
+<label for="secret">Original server secret</label>
+<input id="secret" type="password" autocomplete="off" spellcheck="false" autocapitalize="none">
+<button id="save">Verify and save securely</button>
+<small>Do not enter a Supabase secret key, account password, or a newly generated value. Your original secret is needed to decrypt existing images.</small>
+<p id="result" role="status" aria-live="polite"></p>
+<script>
+const token = location.hash.slice(1);
+history.replaceState(null, '', location.pathname);
+const button = document.querySelector('#save');
+const input = document.querySelector('#secret');
+const result = document.querySelector('#result');
+if (!token) { result.textContent = 'Open the complete private setup link supplied in your chat.'; button.disabled = true; }
+button.addEventListener('click', async () => {
+  button.disabled = true; result.textContent = 'Checking the existing database…';
+  try {
+    const response = await fetch('/setup/verify', {method:'POST', headers:{'Content-Type':'application/json','x-setup-token':token}, body:JSON.stringify({secret:input.value})});
+    const data = await response.json();
+    input.value = ''; result.textContent = data.message;
+    if (!response.ok) button.disabled = false;
+  } catch { input.value = ''; result.textContent = 'Connection failed. Try again.'; button.disabled = false; }
+});
+</script></html>

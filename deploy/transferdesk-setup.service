@@ -1,0 +1,24 @@
+[Unit]
+Description=Temporary TransferDesk credential verification page
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=transferdesk
+Group=transferdesk
+WorkingDirectory=/opt/transferdesk/current
+EnvironmentFile=/var/lib/transferdesk/setup.env
+ExecStart=/opt/transferdesk/node/bin/node deploy/setup.mjs
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/transferdesk
+MemoryMax=256M
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
