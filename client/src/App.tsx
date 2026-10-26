@@ -130,7 +130,7 @@ function StatusPage({ params }: any) {
 /* ---------- SHELL / AUTH ---------- */
 function Shell({ children, public: pub, me, onLogout, alertCount, onSettings, admin }: any) {
   const [loc] = useLocation();
-  const nav = [["/", "Queue", Inbox], ["/oncall", "On call", CalendarDays], ["/catchments", "Catchments", MapPin], ["/doctors", "Doctors", Stethoscope], ...(admin ? [["/admin", "Admin", ShieldCheck]] : [])] as const;
+  const nav = [["/queue", "Queue", Inbox], ["/oncall", "On call", CalendarDays], ["/catchments", "Catchments", MapPin], ["/doctors", "Doctors", Stethoscope], ...(admin ? [["/admin", "Admin", ShieldCheck]] : [])] as const;
   return <div className="min-h-screen bg-background"><header className="border-b bg-card sticky top-0 z-30"><div className="max-w-6xl mx-auto px-4 h-14 flex items-center gap-2">
     <span className="text-primary"><Logo /></span><span className={`font-semibold ${pub ? "" : "hidden md:inline"}`}>BaraBridge</span>
     {!pub && <nav className="flex gap-0.5 ml-2 overflow-x-auto">{(nav as unknown as any[]).map(([h,l,I]: any) => <Link key={h} href={h}><Button variant={loc===h?"secondary":"ghost"} size="sm" data-testid={`link-${l}`} aria-label={l}><I className="h-4 w-4 lg:mr-1" /><span className="hidden lg:inline">{l}</span></Button></Link>)}</nav>}
@@ -144,7 +144,7 @@ function Shell({ children, public: pub, me, onLogout, alertCount, onSettings, ad
 function Login({ onIn }: { onIn: (u: Me) => void }) {
   const [username, setU] = useState(""); const [password, setP] = useState(""); const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
   const go = async (e: any) => { e.preventDefault(); unlockAudio(); askNotify(); setBusy(true); setErr("");
-    try { const r = await (await apiRequest("POST", "/api/login", { username, password })).json(); session.token = r.token; onIn(r.user); }
+    try { const r = await (await apiRequest("POST", "/api/login", { username, password })).json(); if (r.user.role === "referrer") throw new Error("Use referring clinician sign-in instead."); session.token = r.token; onIn(r.user); }
     catch (x: any) { setErr(String(x.message || "").replace(/^\d+:\s*/, "").replace(/^\{"message":"(.*)"\}$/, "$1") || "Sign-in failed"); } finally { setBusy(false); } };
   return <div className="min-h-screen grid place-items-center bg-background p-4"><Card className="p-6 w-full max-w-sm space-y-4"><div className="flex items-center gap-2 text-primary"><Logo /><span className="font-semibold text-foreground">BaraBridge</span></div>
     <p className="text-sm text-muted-foreground">Sign in with your own account. Every case you open or change is recorded. Allow notifications so P1 alerts reach you.</p>
@@ -435,26 +435,44 @@ function Desk({ user, onLogout }: { user: Me; onLogout: () => void }) {
   </Shell>;
 }
 
+const STAFF_TOKEN_KEY = "bb_staff_token";
+const readStaffToken = () => { try { return sessionStorage.getItem(STAFF_TOKEN_KEY) || ""; } catch { return ""; } };
+const clearStaffToken = () => { try { sessionStorage.removeItem(STAFF_TOKEN_KEY); } catch {} };
+
 export default function App() {
   const [staffUser, setStaffUser] = useState<Me|null>(null); const [expired, setExpired] = useState(false);
+  const [restoring, setRestoring] = useState(() => Boolean(readStaffToken()));
   useEffect(() => {
-    session.onExpire = () => { setStaffUser(null); setExpired(true); queryClient.clear(); };
+    session.onExpire = () => { clearStaffToken(); setStaffUser(null); setExpired(true); queryClient.clear(); };
+    const token = readStaffToken();
+    if (token) {
+      session.token = token;
+      apiRequest("GET", "/api/me").then(r => r.json()).then(({ user }) => {
+        if (!user || user.role === "referrer") throw new Error("Staff account required");
+        setStaffUser(user);
+        if (window.location.hash === "#/" || !window.location.hash) window.location.hash = "#/queue";
+      }).catch(() => { session.token = ""; clearStaffToken(); }).finally(() => setRestoring(false));
+    }
     return () => { session.onExpire = undefined; };
   }, []);
   const onStaffLogin = (user: Me) => {
     setStaffUser(user); setExpired(false);
-    if (window.location.hash === "#/login") window.location.hash = "#/";
+    try { sessionStorage.setItem(STAFF_TOKEN_KEY, session.token); } catch {}
+    if (window.location.hash === "#/login" || window.location.hash === "#/" || !window.location.hash) window.location.hash = "#/queue";
   };
   const logout = async () => {
     try { await apiRequest("POST", "/api/me/logout"); } catch {}
-    session.token = ""; queryClient.clear(); setStaffUser(null); setExpired(false);
+    session.token = ""; clearStaffToken(); queryClient.clear(); setStaffUser(null); setExpired(false);
+    window.location.hash = "#/";
   };
-  const staffScreen = staffUser
+  const staffScreen = restoring
+    ? <div className="min-h-screen grid place-items-center text-sm text-muted-foreground">Restoring your session...</div>
+    : staffUser
     ? staffUser.mustChange
       ? <ChangePassword me={staffUser} onDone={() => setStaffUser(u => u ? { ...u, mustChange: false } : null)} />
       : <Desk user={staffUser} onLogout={logout} />
     : <>{expired && <div className="fixed top-3 inset-x-0 z-50 flex justify-center"><div className="bg-amber-100 text-amber-900 text-sm rounded-md px-3 py-2 shadow">You were signed out after inactivity.</div></div>}<Login onIn={onStaffLogin} /></>;
   return <QueryClientProvider client={queryClient}><Toaster /><Router hook={useHashLocation}><Switch>
-    <Route path="/refer/:team" component={ReferPage}/><Route path="/refer" component={ReferPage} /><Route path="/followup"><Shell public><ReferrerPortal/></Shell></Route><Route path="/privacy" component={Privacy} /><Route path="/status/:ref" component={StatusPage} /><Route path="/status" component={StatusPage} /><Route path="/portal"><Shell public><Portal/></Shell></Route><Route path="/login">{staffScreen}</Route><Route path="/">{staffUser || expired ? staffScreen : <Landing />}</Route><Route>{staffScreen}</Route>
+    <Route path="/refer/:team" component={ReferPage}/><Route path="/refer" component={ReferPage} /><Route path="/followup"><Shell public><ReferrerPortal/></Shell></Route><Route path="/privacy" component={Privacy} /><Route path="/status/:ref" component={StatusPage} /><Route path="/status" component={StatusPage} /><Route path="/portal"><Shell public><Portal/></Shell></Route><Route path="/login">{staffScreen}</Route><Route path="/queue">{staffScreen}</Route><Route path="/">{staffUser || restoring || expired ? staffScreen : <Landing />}</Route><Route>{staffScreen}</Route>
   </Switch></Router></QueryClientProvider>;
 }

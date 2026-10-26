@@ -113,6 +113,27 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   };
   const A = auth(), ADMIN = auth(true);
   const REF = auth();
+  // The PWA's old service worker can keep serving a previous client bundle.
+  // /api/* is outside its navigation cache. Refresh only the worker and its
+  // caches; leave browser profile data such as localStorage untouched.
+  app.get("/api/refresh-app", (_req, res) => {
+    res.set("Cache-Control", "no-store").type("html").send(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Updating BaraBridge</title><p>Updating BaraBridge…</p><script>
+      (async () => {
+        try {
+          if ('serviceWorker' in navigator) {
+            const registrations = await navigator.serviceWorker.getRegistrations();
+            await Promise.all(registrations.map(registration => registration.unregister()));
+          }
+          if ('caches' in window) {
+            const keys = await caches.keys();
+            await Promise.all(keys.map(key => caches.delete(key)));
+          }
+        } catch { /* still try a fresh page when browser cache APIs fail */ } finally {
+          window.location.replace('/index.html?updated=' + Date.now() + '#/admin');
+        }
+      })();
+    </script><p>If this page does not continue, <a href="/index.html#/admin">open BaraBridge Admin</a>.</p></html>`);
+  });
   const isReferrer = (req: AuthReq, res: Response, next: NextFunction) => {
     if (req.user?.role !== "referrer") return res.status(403).json({ message: "Referrer account required" });
     next();
@@ -203,6 +224,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const token = await db.createSession(u.id);
     await db.audit({ userId: u.id, userName: u.name, action: "login", ip });
     res.json({ token, user: { id: u.id, name: u.name, username: u.username, role: u.role, team:u.team, phone:u.phone, mustChange: u.must_change } });
+  }));
+
+  app.get("/api/me", A, wrap(async (req, res) => {
+    const { id, name, username, role, team, phone, mustChange } = req.user;
+    res.json({ user: { id, name, username, role, team, phone, mustChange } });
   }));
 
   /* ----- referrer self-service (the referral PWA) ----- */
