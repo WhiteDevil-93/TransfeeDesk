@@ -7,6 +7,7 @@ import { referralInput, decisionInput, followupInput, imageInput } from "@shared
 import { TEAMS, canAccess, canManage, type Team } from "@shared/teams";
 import { z } from "zod";
 import { appendChecklistSurnames, searchIRegister } from "../script/hpcsa-scrape";
+import { hpcsaIdentityMatches } from "./hpcsa-verification";
 
 // Surname that a new unverified referrer needs in the register. Added to the
 // checklist so the scheduled refresh covers it, AND fetched immediately (when
@@ -220,19 +221,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       if (hpcsa) {
         const hits = await db.hpcsaLookup(d.name, hpcsa);
-        // The registration number is the verification. A number that exists in the
-        // register and is not in a terminal state auto-verifies. The name is a soft
-        // signal only (logged, not a gate) — register spellings and what clinicians
-        // type rarely match exactly, and gating on it bounced valid numbers.
-        const DEAD = ["TERMINATED", "ERASED", "CLOSED", "CANCELLED", "EXPIRED"];
         const byNum = hits.rows.find(r => r.hpcsa_number.replace(/\s+/g, "").toLowerCase() === hpcsa.toLowerCase());
         if (byNum) {
           const status = String(byNum.status).toUpperCase();
-          const dead = DEAD.some(s => status.includes(s));
-          const nameMatches = byNum.full_name.replace(/\s+/g, "").toLowerCase().includes(d.name.trim().replace(/\s+/g, "").toLowerCase());
-          if (!dead) { verifyStatus = "verified"; autoApproved = true; }
+          const identityMatches = hpcsaIdentityMatches(d.name, hpcsa, byNum);
+          if (identityMatches) { verifyStatus = "verified"; autoApproved = true; }
           else { verifyStatus = "card_pending"; queueSurnameForRefresh(d.name); }
-          audit(req, "hpcsa_check", null, `num=${hpcsa} status=${status || "n/a"} nameMatch=${nameMatches}`);
+          audit(req, "hpcsa_check", null, `num=${hpcsa} status=${status || "n/a"} identityMatch=${identityMatches}`);
         } else {
           verifyStatus = "card_pending";
           queueSurnameForRefresh(d.name);
@@ -265,7 +260,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (p.data.hpcsa !== undefined && p.data.hpcsa.replace(/\s+/g, "") && u?.verifyStatus !== "verified") {
       const hits = await db.hpcsaLookup(req.user.name, p.data.hpcsa!);
       const h = p.data.hpcsa.replace(/\s+/g, "").toLowerCase();
-      const match = hits.rows.find(r => r.hpcsa_number.replace(/\s+/g, "").toLowerCase() === h && r.full_name.replace(/\s+/g, "").toLowerCase().includes(req.user.name.trim().replace(/\s+/g, "").toLowerCase()) && ["ACTIVE", "INDEPENDENT PRACTICE", "SUPERVISED PRACTICE", "EMPLOYED"].some(s => String(r.status).toUpperCase().includes(s)));
+      const match = hits.rows.find(r => hpcsaIdentityMatches(req.user.name, h, r));
       if (match) await db.approveReferrer(req.user.id, req.user.name);
       else queueSurnameForRefresh(req.user.name);
     }
