@@ -1,7 +1,9 @@
 # renderer-b deployment
 
 Target: Ubuntu ARM64 at `84.12.115.40`. Public origin:
-`https://transferdesk.84-12-115-40.sslip.io`.
+`https://barabridge.84-12-115-40.sslip.io`. The former TransferDesk address
+redirects browser pages to BaraBridge while retaining its existing `/api/*`
+routes for older clients.
 
 The existing Supabase project remains authoritative. No schema, account, key,
 or image-encryption policy is changed by deployment.

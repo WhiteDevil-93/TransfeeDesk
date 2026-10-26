@@ -10,8 +10,8 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["favicon.png", "icon-192.png", "icon-512.png"],
       manifest: {
-        name: "TransferDesk — Referring Clinician",
-        short_name: "TransferDesk",
+        name: "BaraBridge — Referring Clinician",
+        short_name: "BaraBridge",
         description: "Refer patients, track consults and see the on-call roster.",
         start_url: "/#/portal",
         scope: "/",

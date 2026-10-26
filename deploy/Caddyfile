@@ -1,4 +1,4 @@
-transferdesk.84-12-115-40.sslip.io {
+barabridge.84-12-115-40.sslip.io {
     header {
         Strict-Transport-Security "max-age=31536000"
         X-Content-Type-Options nosniff
@@ -12,6 +12,18 @@ transferdesk.84-12-115-40.sslip.io {
     }
     handle_errors {
         header Cache-Control no-store
-        respond "TransferDesk is being configured. No clinical service is available yet." 503
+        respond "BaraBridge is being configured. No clinical service is available yet." 503
+    }
+}
+
+transferdesk.84-12-115-40.sslip.io {
+    route {
+        @api path /api/*
+        handle @api {
+            reverse_proxy 127.0.0.1:5000
+        }
+        handle {
+            redir https://barabridge.84-12-115-40.sslip.io{uri} 308
+        }
     }
 }

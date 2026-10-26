@@ -1,6 +1,6 @@
-# TransferDesk source code
+# BaraBridge source code
 
-This is the editable source of the TransferDesk web application as exported on 14 October 2026. It is a development handoff, not an Android APK, iPhone build or production-compliance certification. No patient records, real passwords, database credentials or staff contacts are included.
+This is the editable source of the BaraBridge web application, held in the existing TransfeeDesk repository. It is a development handoff, not an Android APK, iPhone build or production-compliance certification. No patient records, real passwords, database credentials or staff contacts are included.
 
 ## What is included
 

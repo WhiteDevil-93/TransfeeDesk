@@ -25,7 +25,7 @@ import { TeamSelect, ImagePicker, ReferrerPortal, Timeline, Images, UnitRoster, 
 type Me = User;
 
 const Logo = () => (
-  <svg viewBox="0 0 32 32" width="28" height="28" fill="none" aria-label="TransferDesk logo">
+  <svg viewBox="0 0 32 32" width="28" height="28" fill="none" aria-label="BaraBridge logo">
     <rect x="2" y="2" width="28" height="28" rx="8" stroke="currentColor" strokeWidth="2.5" />
     <path d="M9 13h11m0 0-3.5-3.5M20 13l-3.5 3.5M23 19H12m0 0 3.5-3.5M12 19l3.5 3.5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
@@ -132,7 +132,7 @@ function Shell({ children, public: pub, me, onLogout, alertCount, onSettings, ad
   const [loc] = useLocation();
   const nav = [["/", "Queue", Inbox], ["/oncall", "On call", CalendarDays], ["/catchments", "Catchments", MapPin], ["/doctors", "Doctors", Stethoscope], ...(admin ? [["/admin", "Admin", ShieldCheck]] : [])] as const;
   return <div className="min-h-screen bg-background"><header className="border-b bg-card sticky top-0 z-30"><div className="max-w-6xl mx-auto px-4 h-14 flex items-center gap-2">
-    <span className="text-primary"><Logo /></span><span className={`font-semibold ${pub ? "" : "hidden md:inline"}`}>TransferDesk</span>
+    <span className="text-primary"><Logo /></span><span className={`font-semibold ${pub ? "" : "hidden md:inline"}`}>BaraBridge</span>
     {!pub && <nav className="flex gap-0.5 ml-2 overflow-x-auto">{(nav as unknown as any[]).map(([h,l,I]: any) => <Link key={h} href={h}><Button variant={loc===h?"secondary":"ghost"} size="sm" data-testid={`link-${l}`} aria-label={l}><I className="h-4 w-4 lg:mr-1" /><span className="hidden lg:inline">{l}</span></Button></Link>)}</nav>}
     {!pub && <div className="ml-auto flex items-center gap-1 text-sm">
       <Button size="icon" variant="ghost" onClick={onSettings} aria-label="Alert settings" className="relative" data-testid="button-alerts">{alertCount ? <BellRing className="h-4 w-4 text-red-600" /> : <Bell className="h-4 w-4" />}{alertCount ? <span className="absolute -top-0.5 -right-0.5 bg-red-600 text-white text-[10px] rounded-full h-4 min-w-4 px-1 grid place-items-center">{alertCount}</span> : null}</Button>
@@ -146,20 +146,20 @@ function Login({ onIn }: { onIn: (u: Me) => void }) {
   const go = async (e: any) => { e.preventDefault(); unlockAudio(); askNotify(); setBusy(true); setErr("");
     try { const r = await (await apiRequest("POST", "/api/login", { username, password })).json(); session.token = r.token; onIn(r.user); }
     catch (x: any) { setErr(String(x.message || "").replace(/^\d+:\s*/, "").replace(/^\{"message":"(.*)"\}$/, "$1") || "Sign-in failed"); } finally { setBusy(false); } };
-  return <div className="min-h-screen grid place-items-center bg-background p-4"><Card className="p-6 w-full max-w-sm space-y-4"><div className="flex items-center gap-2 text-primary"><Logo /><span className="font-semibold text-foreground">TransferDesk</span></div>
+  return <div className="min-h-screen grid place-items-center bg-background p-4"><Card className="p-6 w-full max-w-sm space-y-4"><div className="flex items-center gap-2 text-primary"><Logo /><span className="font-semibold text-foreground">BaraBridge</span></div>
     <p className="text-sm text-muted-foreground">Sign in with your own account. Every case you open or change is recorded. Allow notifications so P1 alerts reach you.</p>
     <form className="space-y-3" onSubmit={go}><Field label="Username"><Input autoComplete="username" value={username} onChange={(e) => setU(e.target.value)} required data-testid="input-username" /></Field>
     <Field label="Password"><Input type="password" autoComplete="current-password" value={password} onChange={(e) => setP(e.target.value)} required data-testid="input-password" /></Field>
     {err && <p className="text-sm text-destructive">{err}</p>}<Button className="w-full" disabled={busy} data-testid="button-login">{busy ? "Signing in..." : "Sign in"}</Button></form>
-    <p className="text-xs text-muted-foreground">Sessions end after 30 minutes of inactivity. Forgot your password? Ask a TransferDesk admin to reset it.</p>
+    <p className="text-xs text-muted-foreground">Sessions end after 30 minutes of inactivity. Forgot your password? Ask a BaraBridge admin to reset it.</p>
     <div className="flex gap-4 flex-wrap text-sm"><Link href="/" className="underline">Home</Link><Link href="/refer" className="underline">Referral form</Link><Link href="/followup" className="underline">Follow up referral</Link><Link href="/privacy" className="underline">Privacy notice</Link></div></Card></div>;
 }
 
 /* ---------- LANDING (public entry) ---------- */
 function Landing() {
-  return <div className="min-h-screen bg-background flex flex-col"><header className="border-b bg-card"><div className="max-w-4xl mx-auto px-4 h-14 flex items-center gap-2"><span className="text-primary"><Logo /></span><span className="font-semibold">TransferDesk</span><span className="ml-auto text-xs text-muted-foreground hidden sm:inline">Inter-hospital referrals &amp; consults</span></div></header>
+  return <div className="min-h-screen bg-background flex flex-col"><header className="border-b bg-card"><div className="max-w-4xl mx-auto px-4 h-14 flex items-center gap-2"><span className="text-primary"><Logo /></span><span className="font-semibold">BaraBridge</span><span className="ml-auto text-xs text-muted-foreground hidden sm:inline">Inter-hospital referrals &amp; consults</span></div></header>
     <main className="flex-1 flex items-center"><div className="max-w-4xl mx-auto px-4 py-10 w-full">
-      <h1 className="text-2xl font-semibold mb-1">Welcome to TransferDesk</h1>
+      <h1 className="text-2xl font-semibold mb-1">Welcome to BaraBridge</h1>
       <p className="text-sm text-muted-foreground mb-8">Choose how you want to continue. Receiving-staff accounts sign in to the referral desk; referring clinicians use the secure referral PWA.</p>
       <div className="grid sm:grid-cols-2 gap-4">
         <Link href="/login"><Card className="p-6 hover-elevate space-y-3"><div className="flex items-center gap-2 text-primary"><Inbox className="h-6 w-6" /><span className="font-semibold text-foreground">Staff sign-in</span></div>
@@ -169,7 +169,7 @@ function Landing() {
       </div>
       <div className="flex gap-4 flex-wrap text-sm mt-8 text-muted-foreground"><Link href="/refer" className="underline">Referral form</Link><Link href="/followup" className="underline">Follow up a referral</Link><Link href="/status" className="underline">Check referral status</Link><Link href="/privacy" className="underline">Privacy notice (POPIA)</Link></div>
     </div></main>
-    <footer className="max-w-4xl mx-auto px-4 pb-6 text-xs text-muted-foreground">TransferDesk · inter-hospital referral and consult platform</footer></div>;
+    <footer className="max-w-4xl mx-auto px-4 pb-6 text-xs text-muted-foreground">BaraBridge · inter-hospital referral and consult platform</footer></div>;
 }
 
 function ChangePassword({ me, onDone }: { me: Me; onDone: () => void }) {
@@ -189,13 +189,13 @@ function Privacy() {
   return <Shell public><article className="max-w-2xl mx-auto space-y-4 text-sm leading-relaxed">
     <h1 className="text-xl font-semibold">Privacy notice</h1>
     <p className="text-muted-foreground">Protection of Personal Information Act 4 of 2013 (POPIA), section 18 notification.</p>
-    <h2 className="font-semibold text-base">Who is responsible</h2><p>{p?.responsibleParty || "The receiving hospital"} is the responsible party for referrals sent through TransferDesk.
+    <h2 className="font-semibold text-base">Who is responsible</h2><p>{p?.responsibleParty || "The receiving hospital"} is the responsible party for referrals sent through BaraBridge.
       Information Officer: {p?.infoOfficer || "to be confirmed"}{p?.infoOfficerEmail && <>, <a className="underline" href={`mailto:${p.infoOfficerEmail}`}>{p.infoOfficerEmail}</a></>}{p?.infoOfficerPhone && <>, {p.infoOfficerPhone}</>}.</p>
     <h2 className="font-semibold text-base">What we collect and why</h2><p>The referring clinician's name, facility and contact details, and the minimum clinical information about the patient needed to decide on and arrange a transfer or consultation: initials, age, sex, folder number (optional), diagnosis, history, examination, investigations and the facility's location (optional). Patient names and ID numbers are not collected. Health information is processed by healthcare professionals for the patient's proper treatment and care (POPIA section 32(1)(a)).</p>
     <h2 className="font-semibold text-base">Who can see it</h2><p>The global administrator has access across MEU, TEU and SEU. Clinicians and consultants can access only referrals for their assigned unit. The referring doctor can access the response history and images using the reference and private follow-up code; anyone given that code has access to that referral, so keep it private. Case access, responses and WhatsApp draft openings are logged. A WhatsApp draft opening is not proof of delivery.</p>
     <h2 className="font-semibold text-base">Images, updates and notifications</h2><p>Clinical images and follow-up updates are stored with the referral. Images are additionally encrypted before storage. Remove patient names, IDs and faces before uploading. Image previews are resized and should not replace original diagnostic studies. First opening is recorded in the secure portal; browser notifications work while the portal is open, and an opened receipt does not indicate acceptance for transfer.</p>
     <h2 className="font-semibold text-base">How it is protected</h2><p>Encrypted connections (HTTPS), an encrypted database, individual passwords stored as one-way hashes, automatic sign-out after 30 minutes of inactivity, account lock-out after repeated failed sign-ins, and an audit log that can only be added to, never changed.</p>
-    <h2 className="font-semibold text-base">How long it is kept</h2><p>TransferDesk is a communication tool, not the medical record; the clinical record stays in the patient's hospital folder. Clinical details are automatically deleted {p?.retentionDays || 90} days after a referral is submitted. A minimal non-clinical record (reference number, facilities, dates, outcome) is kept for audit.</p>
+    <h2 className="font-semibold text-base">How long it is kept</h2><p>BaraBridge is a communication tool, not the medical record; the clinical record stays in the patient's hospital folder. Clinical details are automatically deleted {p?.retentionDays || 90} days after a referral is submitted. A minimal non-clinical record (reference number, facilities, dates, outcome) is kept for audit.</p>
     <h2 className="font-semibold text-base">Where it is stored</h2><p>The database is hosted in Frankfurt, Germany. The hospital must approve the applicable cross-border transfer basis, operator agreements, retention policy and hosting before real patient data is used. Technical safeguards alone are not certification of POPIA compliance.</p>
     <h2 className="font-semibold text-base">Your rights</h2><p>Patients and referring clinicians may ask to see, correct or delete their information, object to processing, or complain to the Information Officer above, or to the Information Regulator (South Africa): <a className="underline" href="https://inforegulator.org.za" target="_blank" rel="noreferrer">inforegulator.org.za</a>, complaints.IR@inforegulator.org.za.</p>
   </article></Shell>;
@@ -343,11 +343,11 @@ function Detail({ r: lite, me, onClose, user }: { r: Referral|null; me: string; 
   const dr = r.doctorName.replace(/^dr\.?\s*/i,"");
   const bedTxt = r.bedStatus === "Bed allocated" || r.bedStatus === "Patient en route" ? ` Bed: ${r.bedWard || "allocated"}.` : r.bedStatus === "Bed requested" ? " A bed has been requested; we will confirm when allocated." : "";
   const msg = (s: Status) => {
-    const base = `Dear Dr ${dr}, re: your TransferDesk referral ${r.ref} (patient ${r.patientInitials}).`;
+    const base = `Dear Dr ${dr}, re: your BaraBridge referral ${r.ref} (patient ${r.patientInitials}).`;
     const body = s==="accepted" ? ` The patient has been ACCEPTED by ${r.team}.${bedTxt} Please confirm transfer arrangements with the unit.` : s==="declined" ? " Unfortunately we are unable to accept this referral at this time." : s==="waiting" ? " This referral is on our WAITING list." : s==="advised" ? " Clinical advice is available in your secure follow-up portal. This is not an acceptance for transfer." : "";
     return `${base}${body}${s!=="advised" && (note || r.decisionNote) ? ` Note: ${note || r.decisionNote}` : ""} - ${me}`;
   };
-  const fwd = `TransferDesk: ${r.priority} ${specName(specs, r.specialty)} consult ${r.ref} from ${r.hospital} needs your review. Please sign in to TransferDesk to see the details: ${window.location.href.split("#")[0]} - ${me}`;
+  const fwd = `BaraBridge: ${r.priority} ${specName(specs, r.specialty)} consult ${r.ref} from ${r.hospital} needs your review. Please sign in to BaraBridge to see the details: ${window.location.href.split("#")[0]} - ${me}`;
   const logShare = (to: string) => apiRequest("POST", `/api/referrals/${r.id}/shared`, { to }).catch(() => {});
   const decide = (s: Status) => { m.mutate({ status: s, decisionNote: note || r.decisionNote, decidedBy: me, ...(s === "waiting" && !r.remindAt ? { remindAt: new Date(Date.now() + 30 * 60000).toISOString() } : {}) },{onSuccess:()=>{toast({title:sLabel[s],description:"Saved to the referral and secure portal. Tap WhatsApp to notify the referrer."});setNote("");}}); };
   const remind = (mn: number) => { m.mutate({ remindAt: new Date(Date.now() + mn * 60000).toISOString(), ...(r.status === "pending" ? { status: "waiting", decidedBy: me } : {}) }); toast({ title: `Reminder in ${mn >= 60 ? mn / 60 + " h" : mn + " min"}` }); };
@@ -424,7 +424,7 @@ function Desk({ user, onLogout }: { user: Me; onLogout: () => void }) {
   const [st, setSt] = useState<AlertSettings>(defaultSettings); const [settings, setSettings] = useState(false); const [openId, setOpenId] = useState<number|null>(null);
   useEffect(() => { apiRequest("GET", "/api/settings").then(r => r.json()).then(v => v && setSt({ ...defaultSettings, ...v })).catch(() => {}); }, []);
   const { p1, due, data } = useAlerts(me, st);
-  useEffect(() => { document.title = (p1.length ? `(${p1.length}) P1! ` : due.length ? `(${due.length}) ` : "") + "TransferDesk"; }, [p1.length, due.length]);
+  useEffect(() => { document.title = (p1.length ? `(${p1.length}) P1! ` : due.length ? `(${due.length}) ` : "") + "BaraBridge"; }, [p1.length, due.length]);
   const open = (r: Referral) => setOpenId(r.id);
   return <Shell me={me} admin={manager} onLogout={onLogout} alertCount={p1.length + due.length} onSettings={() => setSettings(true)}>
     <Switch><Route path="/oncall"><OnCall me={user}/></Route><Route path="/catchments" component={Catchments} /><Route path="/doctors" component={Doctors} />
