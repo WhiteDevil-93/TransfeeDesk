@@ -10,10 +10,14 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["favicon.png", "icon-192.png", "icon-512.png"],
       manifest: {
-        name: "BaraBridge — Referring Clinician",
+        name: "BaraBridge",
         short_name: "BaraBridge",
-        description: "Refer patients, track consults and see the on-call roster.",
-        start_url: "/#/portal",
+        description: "Send, receive and track referrals, consults and transfers.",
+        start_url: "/#/",
+        shortcuts: [
+          { name: "Receiving staff", url: "/#/login", description: "Open the referral desk" },
+          { name: "Referring clinician", url: "/#/portal", description: "Send and track your consults" },
+        ],
         scope: "/",
         display: "standalone",
         orientation: "portrait",

@@ -49,10 +49,10 @@ export function ImagePicker({images,onChange}: {images:UploadImage[];onChange:(v
   </div>;
 }
 
-export function Images({images,referralId,credentials}: {images?:ImageAttachment[];referralId?:number;credentials?:{ref:string;code:string}}) {
+export function Images({images,referralId,credentials,imageBase}: {images?:ImageAttachment[];referralId?:number;credentials?:{ref:string;code:string};imageBase?:string}) {
   const [loaded,setLoaded]=useState<Record<number,string>>({}),[err,setErr]=useState("");
   async function load(im:ImageAttachment) {
-    try { const r=await (credentials ? apiRequest("POST",`/api/portal/image/${im.id}`,credentials) : apiRequest("GET",`/api/referrals/${referralId}/images/${im.id}`));
+    try { const r=await (credentials ? apiRequest("POST",`/api/portal/image/${im.id}`,credentials) : apiRequest("GET",`${imageBase || `/api/referrals/${referralId}`}/images/${im.id}`));
       const d=await r.json();setLoaded(x=>({...x,[im.id]:`data:${d.mime};base64,${d.data}`})); } catch(e) {setErr(messageOf(e));}
   }
   return <div className="space-y-2">{images?.map(im=><div key={im.id} className="border rounded p-2">
@@ -60,10 +60,10 @@ export function Images({images,referralId,credentials}: {images?:ImageAttachment
   </div>)}{err && <p className="text-sm text-destructive">{err}</p>}</div>;
 }
 
-export function Timeline({entries,referralId,credentials}: {entries?:Followup[];referralId?:number;credentials?:{ref:string;code:string}}) {
+export function Timeline({entries,referralId,credentials,imageBase}: {entries?:Followup[];referralId?:number;credentials?:{ref:string;code:string};imageBase?:string}) {
   return <div className="space-y-3">{entries?.map(e=><Card key={e.id} className={`p-3 space-y-2 ${e.kind==="advice" ? "border-primary" : ""}`}>
     <div className="flex justify-between flex-wrap gap-1 text-xs"><span className="font-semibold">{e.kind==="advice"?"Clinical advice":e.kind==="decision"?"Decision":"Clinical update"} · {e.author}</span><span className="text-muted-foreground">{new Date(e.createdAt).toLocaleString()}</span></div>
-    <p className="text-sm whitespace-pre-wrap">{e.body}</p><Images images={e.images} referralId={referralId} credentials={credentials} />
+    <p className="text-sm whitespace-pre-wrap">{e.body}</p><Images images={e.images} referralId={referralId} credentials={credentials} imageBase={imageBase} />
   </Card>)}</div>;
 }
 

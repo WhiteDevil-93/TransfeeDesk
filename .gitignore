@@ -24,3 +24,6 @@ data.db-journal
 /supabase/.temp/
 /supabase/.branches/
 /script/retrans/
+
+# Local browser verification evidence
+/artifacts/

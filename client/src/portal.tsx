@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { cloneElement, isValidElement, useId, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient, session } from "./lib/queryClient";
+import { apiRequest, queryClient } from "./lib/queryClient";
+import { Link } from "wouter";
+import { useAuth } from "./auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -8,10 +10,9 @@ import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { Check, X, Phone, MessageCircle, LogOut, CalendarDays, ClipboardList, ShieldCheck, Send, User as UserIcon } from "lucide-react";
-import { TeamSelect, ImagePicker, messageOf, type UploadImage } from "./workflows";
+import { TeamSelect, ImagePicker, Images, Timeline, messageOf, type UploadImage } from "./workflows";
 import type { Referral, Status, RosterSpec, RosterContact } from "@shared/schema";
 
 /* ---------- shared display helpers (kept local to the PWA) ---------- */
@@ -30,14 +31,8 @@ const LOCS = ["Casualty / ED", "Ward", "ICU / High care", "Theatre", "Clinic / O
 const BEDS = ["General ward", "High care", "ICU", "Theatre", "No bed – advice only"];
 const saToday = () => new Date(Date.now() + 2 * 3600e3).toISOString().slice(0, 10);
 
-/* localStorage keys — the referrer's profile survives reloads so consults
-   auto-fill their details (the settled "autofill" requirement). */
-const TK = "td_token", PK = "td_referrer";
-const loadProfile = (): any => { try { return JSON.parse(localStorage.getItem(PK) || "null"); } catch { return null; } };
-const saveProfile = (u: any) => { try { localStorage.setItem(PK, JSON.stringify(u)); } catch {} };
-const clearAuth = () => { try { localStorage.removeItem(TK); localStorage.removeItem(PK); } catch {} };
 
-function Field({ label, children, hint }: any) { return <div className="space-y-1.5"><Label className="text-sm font-medium">{label}</Label>{children}{hint && <p className="text-xs text-muted-foreground">{hint}</p>}</div>; }
+function Field({ label, children, hint }: any) { const id = useId(); return <div className="space-y-1.5"><Label htmlFor={id} className="text-sm font-medium">{label}</Label>{isValidElement(children) ? cloneElement(children as any, { id }) : children}{hint && <p className="text-xs text-muted-foreground">{hint}</p>}</div>; }
 
 const useSpecs = () => useQuery<{ id: string; name: string; group: string }[]>({ queryKey: ["/api/specialties"] });
 const specName = (specs: any[] | undefined, id: string) => specs?.find((s) => s.id === id)?.name || id || "Unspecified";
@@ -53,31 +48,38 @@ function RosterContactBtns({ c }: { c: RosterContact }) {
 function RosterView() {
   const [date, setDate] = useState(saToday());
   const [q, setQ] = useState("");
-  const { data, isLoading } = useQuery<{ specs: RosterSpec[]; hospital: string; generated: string }>({ queryKey: [`/api/referrer/roster?date=${date}`] });
+  const { data, isLoading, error, refetch } = useQuery<{ specs: RosterSpec[]; hospital: string; generated: string }>({ queryKey: [`/api/referrer/roster?date=${date}`] });
   const specs = (data?.specs || []).filter((s) => !q || JSON.stringify(s).toLowerCase().includes(q.toLowerCase()));
   return <div className="space-y-4">
     <div className="flex flex-wrap gap-2 items-end justify-between"><div><h2 className="font-semibold">On-call roster</h2><p className="text-xs text-muted-foreground">{data?.hospital || ""} · built {data?.generated || "previously"}. Rosters change at short notice; confirm with the switchboard when in doubt.</p></div>
       <div className="flex gap-2"><Input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} className="w-40" /><Button variant="outline" size="sm" onClick={() => setDate(saToday())}>Today</Button></div></div>
     <Input placeholder="Search specialty or name" value={q} onChange={(e) => setQ(e.target.value)} className="max-w-xs" />
-    {isLoading ? <Skeleton className="h-40" /> : specs.length === 0 ? <Card className="p-6 text-center text-muted-foreground">No roster for this date.</Card> :
+    {isLoading ? <p role="status">Loading on-call roster...</p> : error ? <Card className="p-5 space-y-3"><p role="alert">Couldn't load the roster. Try again or confirm with switchboard.</p><Button onClick={() => refetch()}>Try again</Button></Card> : specs.length === 0 ? <Card className="p-6 text-center text-muted-foreground">No roster for this date.</Card> :
       <div className="grid md:grid-cols-2 gap-3">{specs.map((s) => <Card key={s.id} className="p-4 space-y-2"><div className="flex justify-between gap-2"><p className="font-semibold">{s.name}</p><span className="text-xs text-muted-foreground">{s.group}</span></div>
         {s.entries.length === 0 ? <p className="text-sm text-muted-foreground">No roster for this date.</p> : s.entries.map((e, i) => <div key={i} className="text-sm border-t pt-2 first:border-0 first:pt-0"><p><span className="text-muted-foreground">{e.role}: </span><span className="font-medium">{e.text}</span></p>{e.contacts.map((c, j) => <div key={j}><RosterContactBtns c={c} /></div>)}</div>)}</Card>)}</div>}</div>;
 }
 
 /* ---------- read-only referral detail for the referrer ---------- */
 function ReferralDetail({ r, onClose }: { r: Referral; onClose: () => void }) {
-  const { data: full } = useQuery<Referral & { timeline: any[] }>({ queryKey: [`/api/referrals/${r.id}`], staleTime: 0, refetchInterval: 15000 });
+  const detailPath = `/api/referrer/referrals/${r.id}`;
+  const { data: full, error, refetch } = useQuery<Referral & { timeline: any[] }>({ queryKey: [detailPath], staleTime: 0, refetchInterval: 15000 });
+  const [body, setBody] = useState(""), [images, setImages] = useState<UploadImage[]>([]);
+  const { toast } = useToast();
+  const followup = useMutation({ mutationFn: () => apiRequest("POST", `${detailPath}/followup`, { body, images }), onSuccess: () => { setBody(""); setImages([]); refetch(); toast({ title: "Update sent to the receiving team" }); }, onError: e => toast({ title: messageOf(e), variant: "destructive" }) });
   const d: Referral & { timeline: any[] } = full || { ...r, timeline: [] };
   const { data: specs } = useSpecs();
   const Sec = ({ t, v }: any) => <div><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t}</p><p className="text-sm whitespace-pre-wrap">{v || "-"}</p></div>;
   return <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
-    <div className="bg-background rounded-t-xl sm:rounded-xl w-full max-w-xl max-h-[92vh] overflow-y-auto p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+    <div role="dialog" aria-modal="true" aria-label="Referral details" className="bg-background rounded-t-xl sm:rounded-xl w-full max-w-xl max-h-[92vh] overflow-y-auto p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+      {error && <div role="alert" className="space-y-2"><p>Couldn't load the latest referral details. Information below may be incomplete.</p><Button variant="outline" onClick={() => refetch()}>Try again</Button></div>}
       <div className="flex items-center gap-2 pr-8"><span className={`rounded px-2 py-0.5 text-xs font-bold ${pColor[d.priority]}`}>{d.priority}</span><span className="font-semibold">{d.diagnosis}</span><Button size="icon" variant="ghost" className="ml-auto" onClick={onClose} aria-label="Close"><X className="h-4 w-4" /></Button></div>
       <div className="flex flex-wrap gap-2 items-center text-sm"><Badge className={sColor[d.status]}>{sLabel[d.status]}</Badge><span className="font-mono">{d.ref}</span><span className="text-muted-foreground">{new Date(d.createdAt).toLocaleString()}</span></div>
       <p className="text-xs text-muted-foreground">{d.team || "Unassigned"} · {d.consultType === "advice" ? "Advice-only consult" : "Transfer request"}</p>
       <div className="grid grid-cols-3 gap-3 text-sm"><Sec t="Specialty" v={specName(specs, d.specialty)} /><Sec t="Bed needed" v={d.bedNeeded} /><Sec t="Patient" v={`${d.patientInitials}, ${d.age} ${d.sex}`} /></div>
       {d.decisionNote && <Card className="p-3 border-primary space-y-1"><p className="text-xs font-semibold uppercase tracking-wide text-primary">Clinical advice / decision</p><p className="text-sm whitespace-pre-wrap">{d.decisionNote}</p>{d.decidedBy && <p className="text-xs text-muted-foreground">By {d.decidedBy}{d.decidedAt && `, ${ago(d.decidedAt)}`}</p>}</Card>}
-      {d.timeline && d.timeline.length > 0 && <div className="space-y-2"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Updates and response history</p>{d.timeline.map((e: any) => <Card key={e.id} className={`p-3 space-y-1 ${e.kind === "advice" ? "border-primary" : ""}`}><div className="flex justify-between text-xs"><span className="font-semibold">{e.kind === "advice" ? "Clinical advice" : e.kind === "decision" ? "Decision" : "Clinical update"} · {e.author}</span><span className="text-muted-foreground">{new Date(e.createdAt).toLocaleString()}</span></div><p className="text-sm whitespace-pre-wrap">{e.body}</p></Card>)}</div>}
+      <Images images={d.images} imageBase={detailPath}/>
+      <section aria-label="Updates and response history" className="space-y-3"><h2 className="font-semibold">Updates and response history</h2><Timeline entries={d.timeline} imageBase={detailPath}/></section>
+      {!d.purgedAt && <form className="space-y-3 border-t pt-4" onSubmit={e => { e.preventDefault(); followup.mutate(); }}><label htmlFor="referrer-update" className="text-sm font-medium">Send an update or follow-up question</label><Textarea id="referrer-update" value={body} onChange={e => setBody(e.target.value)} minLength={2} maxLength={5000} required/><ImagePicker images={images} onChange={setImages}/><Button disabled={followup.isPending}>{followup.isPending ? "Sending..." : "Send update to the team"}</Button></form>}
       <Button variant="outline" className="w-full" onClick={onClose}>Close</Button>
     </div></div>;
 }
@@ -109,6 +111,7 @@ function ConsultForm({ me, onDone, initialTeam }: { me: any; onDone: () => void;
   });
   if (done) return <Card className="p-6 space-y-3"><Check className="mx-auto h-10 w-10 text-primary" /><h2 className="text-lg font-semibold text-center">Consult sent to {f.team || "the unit"}</h2>
     <p className="text-sm">Reference <span className="font-mono font-bold" data-testid="text-ref">{done.ref}</span>. Track it under My consults; advice and decisions appear there and in your secure portal.</p>
+    <div className="rounded-md border p-3 space-y-1"><p className="text-sm font-medium">Private follow-up code</p><p className="font-mono break-all select-all">{done.followupCode}</p><p className="text-xs text-muted-foreground">Keep this code private. You can use it with the reference on the follow-up page if you cannot sign in.</p></div>
     <div className="flex gap-2 flex-wrap"><Button onClick={onDone}>Back to dashboard</Button><Button variant="outline" onClick={() => { setF(freshForm()); setImages([]); setDone(null); }}>New consult</Button></div></Card>;
   return <form className="space-y-5" onSubmit={(e) => { e.preventDefault(); m.mutate(); }}>
     <Card className="p-5 space-y-4"><div className="flex items-center gap-2"><UserIcon className="h-4 w-4 text-primary" /><h2 className="font-semibold">Your details</h2><Badge variant="outline" className="ml-auto">Auto-filled — edit if changed</Badge></div>
@@ -170,7 +173,6 @@ function CardUpload({ me, onUploaded }: { me: any; onUploaded: () => void }) {
     try { const d = await (await apiRequest("POST", "/api/referrer/card", { image: { name: "staff-card.jpg", mime, data: img } })).json(); toast({ title: "Staff card sent", description: d.message || "The owner will verify it shortly." }); onUploaded(); }
     catch (e: any) { setErr(messageOf(e)); } finally { setBusy(false); }
   };
-  const shown = me?.verifyStatus === "card_pending" || me?.verifyStatus === "verified";
   return <Card className="p-4 space-y-3"><div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-primary" /><p className="font-semibold text-sm">Verify your account</p></div>
     <p className="text-xs text-muted-foreground">{me?.verifyStatus === "verified" ? "Your account is verified." : "Upload a photo of your staff card (showing your name, facility and, where present, HPCSA/DOH details). You can send referrals after the owner verifies your account."}</p>
     {img && <img src={`data:${mime};base64,${img}`} alt="Staff card preview" className="max-h-56 rounded border" />}
@@ -179,7 +181,8 @@ function CardUpload({ me, onUploaded }: { me: any; onUploaded: () => void }) {
 }
 
 /* ---------- login + signup ---------- */
-function PortalAuth({ onIn }: { onIn: (u: any) => void }) {
+function PortalAuth() {
+  const { signIn, expired } = useAuth();
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
   const [u, setU] = useState(""); const [p, setP] = useState("");
@@ -188,15 +191,16 @@ function PortalAuth({ onIn }: { onIn: (u: any) => void }) {
   const { toast } = useToast();
   const doLogin = async (e: any) => { e.preventDefault(); setBusy(true); setErr("");
     try { const r = await (await apiRequest("POST", "/api/login", { username: u, password: p })).json();
-      if (r.user.role !== "referrer") return setErr("This is a staff account, not a referral-PWA account. Use Staff sign-in on the home page.");
-      session.token = r.token; localStorage.setItem(TK, r.token); saveProfile(r.user); onIn(r.user);
+      signIn(r);
     } catch (x: any) { setErr(messageOf(x)); } finally { setBusy(false); } };
   const doSignup = async (e: any) => { e.preventDefault(); setBusy(true); setErr("");
     try { const d = await (await apiRequest("POST", "/api/referrer/signup", { ...su, name: su.name, email: su.email, phone: su.phone, hospital: su.hospital, department: su.department, specialty: su.specialty, profession: su.profession, hpcsa: su.hpcsa })).json();
       const r = await (await apiRequest("POST", "/api/login", { username: su.username, password: su.password })).json();
-      session.token = r.token; localStorage.setItem(TK, r.token); saveProfile(r.user); toast({ title: d.autoApproved ? "Verified against HPCSA" : "Account created", description: d.message }); onIn(r.user);
+      toast({ title: d.autoApproved ? "Verified against HPCSA" : "Account created", description: d.message }); signIn(r);
     } catch (x: any) { setErr(messageOf(x)); } finally { setBusy(false); } };
   return <div className="max-w-md mx-auto space-y-5">
+    <div className="space-y-2"><h1 className="text-xl font-semibold">Referring clinician portal</h1><p className="text-sm text-muted-foreground">Create an account or sign in to send referrals and track your consults. New accounts need verification before sending.</p><p className="text-sm">Receiving staff? <Link href="/login" className="underline font-medium">Go to staff sign-in</Link></p></div>
+    {expired && <p role="status" className="text-sm text-muted-foreground">Your session ended. Sign in again to continue.</p>}
     <div className="flex gap-1 rounded-md border p-1">{(["login", "signup"] as const).map((mm) => <button key={mm} onClick={() => { setMode(mm); setErr(""); }} className={`flex-1 rounded px-3 py-1.5 text-sm font-medium ${mode === mm ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>{mm === "login" ? "Sign in" : "Create account"}</button>)}</div>
     {mode === "login" ? <form className="space-y-3" onSubmit={doLogin}>
       <Field label="Username"><Input value={u} onChange={(e) => setU(e.target.value)} required data-testid="input-portal-username" autoComplete="username" /></Field>
@@ -216,7 +220,7 @@ function PortalAuth({ onIn }: { onIn: (u: any) => void }) {
         <Field label="Password *"><Input type="password" value={su.password} onChange={setS("password")} required placeholder="10+ characters" /></Field>
       </div>
       {err && <p className="text-sm text-destructive">{err}</p>}<Button className="w-full" disabled={busy} data-testid="button-portal-signup">{busy ? "Creating..." : "Create account"}</Button>
-      <p className="text-xs text-muted-foreground">Your details are stored so future consults auto-fill. No HPCSA number? Upload a staff card after signing up and the owner will verify you.</p>
+      <p className="text-xs text-muted-foreground">Your saved contact details prefill future consults. No HPCSA number? Upload a staff card after signing up and the owner will verify you.</p>
     </form>}
   </div>;
 }
@@ -225,44 +229,36 @@ function PortalAuth({ onIn }: { onIn: (u: any) => void }) {
 function Dashboard({ me, onLogout, onRefresh, initialTeam }: { me: any; onLogout: () => void; onRefresh: () => void; initialTeam?: string }) {
   const [tab, setTab] = useState<"consults" | "roster" | "new">(initialTeam ? "new" : "consults");
   const [openId, setOpenId] = useState<number | null>(null);
-  const { data: list = [], isLoading } = useQuery<Referral[]>({ queryKey: ["/api/referrer/my-referrals"], refetchInterval: 20000 });
+  const { data: list = [], isLoading, error, refetch } = useQuery<Referral[]>({ queryKey: ["/api/referrer/my-referrals"], refetchInterval: 20000 });
   const verified = me.verifyStatus === "verified";
   return <div className="max-w-4xl mx-auto space-y-5">
-    <div className="flex flex-wrap items-center gap-3"><div className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-primary" /><div><p className="font-semibold">{me.name}</p><p className="text-xs text-muted-foreground">{me.hospital} · {me.specialty} · {me.profession}</p></div></div>
+    <div className="flex flex-wrap items-center gap-3"><div className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-primary" /><div><p className="font-semibold">{me.name}</p><p className="text-xs text-muted-foreground">{[me.specialty, me.profession].filter(Boolean).join(" · ")}</p></div></div>
       <Badge className={verified ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100" : "bg-amber-100 text-amber-900 dark:bg-amber-900 dark:text-amber-100"}>{verified ? "Verified" : "Verification pending"}</Badge>
       <Button size="sm" variant="ghost" className="ml-auto" onClick={onLogout}><LogOut className="h-4 w-4 mr-1" />Sign out</Button></div>
     {!verified && <><CardUpload me={me} onUploaded={onRefresh} /><Button size="sm" variant="outline" onClick={onRefresh}>Check verification status</Button></>}
-    <div className="flex gap-1 rounded-md border p-1 w-fit">{([["consults", "My consults", ClipboardList], ["new", "New consult", Send], ["roster", "On-call roster", CalendarDays]] as const).map(([t, l, I]) =>
-      <button key={t} onClick={() => setTab(t as any)} className={`flex items-center gap-1.5 rounded px-3 py-1.5 text-sm font-medium ${tab === t ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}><I className="h-4 w-4" />{l}</button>)}</div>
+    <nav aria-label="Referrer workspace" className="flex flex-wrap gap-1 rounded-md border p-1 w-fit">{([["consults", "My consults", ClipboardList], ["new", "New consult", Send], ["roster", "On-call roster", CalendarDays]] as const).map(([t, l, I]) =>
+      <button key={t} aria-current={tab === t ? "page" : undefined} onClick={() => setTab(t as any)} className={`flex items-center gap-1.5 rounded px-3 py-2 text-sm font-medium ${tab === t ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}><I className="h-4 w-4" />{l}</button>)}</nav>
+    {tab === "new" && <Button variant="ghost" onClick={() => setTab("consults")}>Back to my consults</Button>}
     {tab === "new" && (verified ? <ConsultForm me={me} initialTeam={initialTeam} onDone={() => setTab("consults")} /> : <Card className="p-5">Your account must be verified before you can send a referral. Upload your staff card above, then check your verification status.</Card>)}
     {tab === "roster" && <RosterView />}
     {tab === "consults" && <>
-      {isLoading ? <div className="space-y-2">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-20" />)}</div> :
-        list.length === 0 ? <Card className="p-10 text-center text-muted-foreground">No consults yet. Start one with New consult.</Card> :
+      {isLoading ? <p role="status">Loading your consults...</p> : error ? <Card className="p-5 space-y-3"><p role="alert">Couldn't load your consults. Check your connection and try again.</p><Button onClick={() => refetch()}>Try again</Button></Card> :
+        list.length === 0 ? <Card className="p-6 space-y-3"><p>{verified ? "No consults yet. Create your first referral to request advice or a transfer." : "No consults yet. Your account must be verified before you can send one."}</p>{verified && <Button onClick={() => setTab("new")}>Start a new consult</Button>}</Card> :
         <div className="space-y-2">{list.map((r) => <Card key={r.id} onClick={() => setOpenId(r.id)} className={`p-4 cursor-pointer hover-elevate flex gap-3 items-start ${r.priority === "P1" && r.status === "pending" ? "border-l-4 border-l-red-600" : ""}`}>
           <span className={`rounded px-2 py-1 text-xs font-bold ${pColor[r.priority]}`}>{r.priority}</span>
           <div className="flex-1 min-w-0"><div className="flex flex-wrap gap-x-2 items-center"><span className="font-semibold">{r.diagnosis}</span><span className="font-mono text-xs text-muted-foreground">{r.ref}</span></div>
             <p className="text-sm text-muted-foreground">{r.team || "Unassigned"} · {r.consultType === "advice" ? "Advice only" : "Transfer"} · {ago(r.createdAt)}</p></div>
           <Badge className={sColor[r.status]}>{sLabel[r.status]}</Badge></Card>)}</div>}
-      {openId && <ReferralDetail r={list.find((x) => x.id === openId)!} onClose={() => setOpenId(null)} />}
+      {openId && list.some(x => x.id === openId) && <ReferralDetail r={list.find((x) => x.id === openId)!} onClose={() => setOpenId(null)} />}
     </>}
   </div>;
 }
 
-/* ---------- root: restore session from localStorage, else auth ---------- */
+/* ---------- root: one shared session for staff and referrers ---------- */
 export function Portal({ initialTeam }: { initialTeam?: string } = {}) {
-  const [me, setMe] = useState<any | null>(null);
-  const [restored, setRestored] = useState(false);
-  useEffect(() => {
-    const tk = localStorage.getItem(TK);
-    if (!tk) return setRestored(true);
-    session.token = tk;
-    apiRequest("GET", "/api/referrer/profile").then((r) => r.json()).then((d) => {
-      session.token = tk; saveProfile(d.profile); setMe(d.profile);
-    }).catch(() => { clearAuth(); session.token = ""; }).finally(() => setRestored(true));
-  }, []);
-  const refresh = () => { apiRequest("GET", "/api/referrer/profile").then((r) => r.json()).then((d) => { saveProfile(d.profile); setMe(d.profile); }).catch(() => {}); };
-  const logout = () => { apiRequest("POST", "/api/me/logout").catch(() => {}); clearAuth(); session.token = ""; setMe(null); };
-  if (!restored) return <div className="py-16 flex justify-center"><Skeleton className="h-6 w-40" /></div>;
-  return me ? <Dashboard me={me} onLogout={logout} onRefresh={refresh} initialTeam={initialTeam} /> : <PortalAuth onIn={setMe} />;
+  const { user, signOut, refreshUser } = useAuth();
+  const { toast } = useToast();
+  const refresh = () => { refreshUser().then(() => toast({ title: "Verification status refreshed" })).catch(e => toast({ title: messageOf(e), variant: "destructive" })); };
+  if (user && user.role !== "referrer") return <Card className="max-w-md mx-auto p-5 space-y-4"><h1 className="text-xl font-semibold">You're signed in as receiving staff</h1><p>The referral desk is where you review and manage incoming consults.</p><Link href="/queue" className="block underline font-medium">Continue to referral desk</Link><Button variant="outline" onClick={() => signOut("/portal")}>Switch to a referrer account</Button></Card>;
+  return user ? <Dashboard me={user} onLogout={() => signOut()} onRefresh={refresh} initialTeam={initialTeam} /> : <PortalAuth/>;
 }

@@ -224,8 +224,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   }));
 
   app.get("/api/me", A, wrap(async (req, res) => {
-    const { id, name, username, role, team, phone, mustChange } = req.user;
-    res.json({ user: { id, name, username, role, team, phone, mustChange } });
+    res.json({ user: req.user });
   }));
 
   /* ----- referrer self-service (the referral PWA) ----- */
@@ -303,6 +302,32 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/referrer/my-referrals", REF, isReferrer, wrap(async (req, res) => {
     res.json(await db.list(undefined, req.user.id));
   }));
+  const ownReferral = async (req: AuthReq, res: Response) => {
+    const r = await db.get(Number(req.params.id));
+    if (!r || r.referrerId !== req.user.id) { res.status(404).json({ message: "Referral not found" }); return null; }
+    return r;
+  };
+  app.get("/api/referrer/referrals/:id", REF, isReferrer, wrap(async (req, res) => {
+    const r = await ownReferral(req, res); if (!r) return;
+    await audit(req, "referrer_view_referral", r.id);
+    res.json({ ...r, timeline: await db.timeline(r.id), images: (await db.images(r.id)).filter(im => !im.followupId) });
+  }));
+  app.get("/api/referrer/referrals/:id/images/:imageId", REF, isReferrer, wrap(async (req, res) => {
+    const r = await ownReferral(req, res); if (!r) return;
+    const image = await db.image(Number(req.params.imageId), r.id);
+    if (!image) return res.status(404).end();
+    await audit(req, "referrer_view_image", r.id); res.json(image);
+  }));
+  app.post("/api/referrer/referrals/:id/followup", REF, isReferrer, wrap(async (req, res) => {
+    const r = await ownReferral(req, res); if (!r) return;
+    if (r.purgedAt) return res.status(410).json({ message: "Clinical record has expired" });
+    if (limit("referrer-followup:" + req.user.id, 20, 3600e3)) return res.status(429).json({ message: "Too many updates" });
+    const p = followupInput.omit({ ref: true, code: true }).safeParse(req.body);
+    if (!p.success) return res.status(400).json({ message: "Enter an update and up to 3 images" });
+    try { await db.append(r.id, req.user.name, req.user.id, "update", p.data.body, p.data.images); }
+    catch (e: any) { if (e.message.includes("image") || e.message.includes("JPEG")) return res.status(400).json({ message: e.message }); throw e; }
+    await audit(req, "referral_followup", r.id, "Referrer submitted clinical update"); res.json({ ok: true });
+  }));
   app.get("/api/referrer/roster", REF, isReferrer, (req: AuthReq, res) => {
     const date = String(req.query.date || saToday());
     res.json({ hospital: loadRoster()?.hospital, generated: loadRoster()?.generated, date, specs: rosterFor(date, req.query.spec ? String(req.query.spec) : undefined) });
@@ -337,7 +362,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   }));
 
   /* ----- clinical (signed-in) ----- */
-  app.get("/api/referrals", A, wrap(async (req, res) => { maybePurge(); res.json(await db.list(scope(req))); }));
+  app.get("/api/referrals", A, wrap(async (req, res) => { if (req.user.role === "referrer") return res.status(403).json({ message: "Use My consults in the referrer portal" }); maybePurge(); res.json(await db.list(scope(req))); }));
   app.get("/api/referrals/:id", A, wrap(async (req, res) => {
     const r=await findCase(req,res); if(!r) return;
     await db.markOpened(r.id,req.user.name);

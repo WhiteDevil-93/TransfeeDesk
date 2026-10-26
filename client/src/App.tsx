@@ -1,8 +1,8 @@
-import { useState, useMemo, useEffect, useRef } from "react";
+import { cloneElement, isValidElement, useId, useState, useMemo, useEffect, useRef, type ReactNode } from "react";
 import { Switch, Route, Router, Link, useLocation } from "wouter";
 import { useHashLocation } from "wouter/use-hash-location";
 import { QueryClientProvider, useQuery, useMutation } from "@tanstack/react-query";
-import { queryClient, apiRequest, session } from "./lib/queryClient";
+import { queryClient, apiRequest } from "./lib/queryClient";
 import { Toaster } from "@/components/ui/toaster";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -20,8 +20,9 @@ import { unlockAudio, sounds, notify, askNotify, canNotify, defaultSettings, typ
 import type { Referral, Doctor, Status, RosterSpec, RosterContact, User, AuditRow, AppSettings, Followup } from "@shared/schema";
 import { Admin } from "./admin";
 import { Portal } from "./portal";
+import { AuthProvider, useAuth, workspaceFor } from "./auth";
 import { TEAMS, TEAM_NAMES } from "@shared/teams";
-import { TeamSelect, ImagePicker, ReferrerPortal, Timeline, Images, UnitRoster, messageOf, type UploadImage } from "./workflows";
+import { TeamSelect, ReferrerPortal, Timeline, Images, UnitRoster, messageOf } from "./workflows";
 type Me = User;
 
 const Logo = () => (
@@ -36,8 +37,6 @@ const sColor: Record<Status,string> = { pending: "bg-sky-100 text-sky-900 dark:b
 const ago = (iso: string) => { const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m/60)} h ago` : new Date(iso).toLocaleDateString(); };
 const waNum = (p: string) => { const d = p.replace(/\D/g, ""); return d.startsWith("0") ? "27" + d.slice(1) : d; };
 const catchUrl = (lat: string, lon: string) => `https://catchments.medricsoftware.co.za/?lat=${lat}&lon=${lon}`;
-const LOCS = ["Casualty / ED", "Ward", "ICU / High care", "Theatre", "Clinic / OPD"];
-const BEDS = ["General ward", "High care", "ICU", "Theatre", "No bed – advice only"];
 const BEDSTAT = ["Not assigned", "Bed requested", "Bed allocated", "Patient en route", "Arrived"];
 const mins = (iso: string) => (Date.now() - new Date(iso).getTime()) / 60000;
 function isOverdue(r: Referral, st: AlertSettings) {
@@ -49,70 +48,7 @@ const useSpecs = () => useQuery<{ id: string; name: string; group: string }[]>({
 const specName = (specs: any[] | undefined, id: string) => specs?.find(s => s.id === id)?.name || id || "Unspecified";
 const referLink = (team?:string) => window.location.href.split("#")[0] + "#/refer" + (team?`/${team}`:"");
 
-function Field({ label, children, hint }: any) { return <div className="space-y-1.5"><Label className="text-sm font-medium">{label}</Label>{children}{hint && <p className="text-xs text-muted-foreground">{hint}</p>}</div>; }
-
-/* ---------- PUBLIC REFERRAL FORM ---------- */
-const empty = { team:"",consultType:"transfer",consent: false, specialty:"", currentLocation:"", bedNeeded:"", lat:"", lon:"", doctorName:"", hospital:"", department:"", phone:"", email:"", patientInitials:"", age:"", sex:"", folderNo:"", diagnosis:"", history:"", exam:"", investigations:"", reason:"", suggestedPriority:"P2" };
-function ReferPage({params}:any) {
-  const preset=params?.team||"";
-  const [f, setF] = useState<any>({...empty,team:TEAMS.includes(preset as any)?preset:""}); const [done, setDone] = useState<any>(null); const { toast } = useToast();
-  const [images,setImages]=useState<UploadImage[]>([]),[showPortal,setShowPortal]=useState(false);
-  const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target ? e.target.value : e });
-  const { data: specs } = useSpecs(); const [geo, setGeo] = useState("");
-  const groups = useMemo(() => Array.from(new Set((specs || []).map(s => s.group))).filter(g => g !== "Management"), [specs]);
-  const locate = () => { if (!navigator.geolocation) return setGeo("Location not available on this device"); setGeo("Finding location...");
-    navigator.geolocation.getCurrentPosition((p) => { setF((x: any) => ({ ...x, lat: p.coords.latitude.toFixed(6), lon: p.coords.longitude.toFixed(6) })); setGeo(""); }, () => setGeo("Could not get location. You can skip this."), { enableHighAccuracy: true, timeout: 10000 }); };
-  const m = useMutation({ mutationFn: async () => (await apiRequest("POST", "/api/referrals", {...f,images})).json(), onSuccess: (d) => setDone(d), onError: e => toast({ title: messageOf(e), variant: "destructive" }) });
-  if(done && showPortal) return <Shell public><ReferrerPortal initialRef={done.ref} initialCode={done.followupCode}/></Shell>;
-  if (done) return <Shell public><Card className="p-6 max-w-lg mx-auto space-y-3"><Check className="mx-auto h-10 w-10 text-primary" /><h1 className="text-xl font-semibold text-center">Referral received by {f.team}</h1><p className="text-sm">Save both values below. The code is private and unlocks advice, updates and images for this referral.</p><p className="font-mono text-lg font-bold break-all" data-testid="text-ref">{done.ref}</p><p className="font-mono text-sm break-all p-3 border rounded" data-testid="text-followup-code">{done.followupCode}</p><p className="text-xs text-muted-foreground">Do not share the code in a group chat. If lost, contact the receiving unit consultant to verify your identity and reset access.</p><div className="flex gap-2 flex-wrap"><Button variant="outline" onClick={()=>navigator.clipboard?.writeText(`Reference: ${done.ref}\nPrivate code: ${done.followupCode}`)}>Copy receipt</Button><Button onClick={()=>setShowPortal(true)} data-testid="button-receipt-followup">Open follow-up portal</Button><Button variant="ghost" onClick={() => { setF({...empty,team:f.team}); setDone(null);setImages([]); }}>New referral</Button></div></Card></Shell>;
-  return <Shell public>
-    <form className="max-w-3xl mx-auto space-y-6" onSubmit={(e) => { e.preventDefault(); m.mutate(); }}>
-      <div><h1 className="text-xl font-semibold">Inter-hospital referral</h1><p className="text-sm text-muted-foreground">Fields marked * are required. Please use patient initials only, not full names or ID numbers.</p></div>
-      <Card className="p-5 space-y-4"><h2 className="font-semibold">Referring doctor</h2>
-        <div className="grid sm:grid-cols-2 gap-4">
-          <Field label="Full name *"><Input data-testid="input-doctor" value={f.doctorName} onChange={set("doctorName")} required /></Field>
-          <Field label="Hospital / facility *"><Input value={f.hospital} onChange={set("hospital")} required /></Field>
-          <Field label="Department / ward"><Input value={f.department} onChange={set("department")} /></Field>
-          <Field label="Cellphone (WhatsApp) *"><Input type="tel" value={f.phone} onChange={set("phone")} placeholder="082 123 4567" required /></Field>
-          <Field label="Email"><Input type="email" value={f.email} onChange={set("email")} /></Field>
-        </div>
-        <Field label="Facility location (for EMS catchment)" hint="Optional. Lets the receiving team confirm your facility's catchment area.">
-          <div className="flex flex-wrap gap-2 items-center"><Button type="button" variant="outline" size="sm" onClick={locate} data-testid="button-locate"><MapPin className="h-4 w-4 mr-1" />{f.lat ? "Update location" : "Share my location"}</Button>
-          {f.lat && <span className="text-xs font-mono text-muted-foreground">{f.lat}, {f.lon}</span>}{geo && <span className="text-xs text-muted-foreground">{geo}</span>}</div></Field></Card>
-      <Card className="p-5 space-y-4"><h2 className="font-semibold">Referral to</h2>
-        <div className="grid sm:grid-cols-2 gap-4"><Field label="Receiving unit *"><TeamSelect value={f.team} onChange={v=>setF({...f,team:v})}/></Field>
-          <Field label="Consult type"><Select value={f.consultType} onValueChange={v=>setF({...f,consultType:v,bedNeeded:v==="advice"?"No bed – advice only":""})}><SelectTrigger data-testid="select-consult-type"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="transfer">Transfer request</SelectItem><SelectItem value="advice">Advice only / no transfer</SelectItem></SelectContent></Select></Field></div>
-        <div className="grid sm:grid-cols-3 gap-4">
-          <Field label="Specialty *"><Select value={f.specialty} onValueChange={set("specialty")}><SelectTrigger data-testid="select-specialty"><SelectValue placeholder="Select specialty" /></SelectTrigger><SelectContent>
-            {groups.map(g => <div key={g}><p className="px-2 py-1 text-xs font-semibold text-muted-foreground">{g}</p>{(specs || []).filter(s => s.group === g).map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</div>)}
-            <SelectItem value="other">Other / not listed</SelectItem></SelectContent></Select></Field>
-          <Field label="Patient currently in"><Select value={f.currentLocation} onValueChange={set("currentLocation")}><SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger><SelectContent>{LOCS.map(l => <SelectItem key={l} value={l}>{l}</SelectItem>)}</SelectContent></Select></Field>
-          <Field label="Bed needed"><Select value={f.bedNeeded} onValueChange={set("bedNeeded")}><SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger><SelectContent>{BEDS.map(l => <SelectItem key={l} value={l}>{l}</SelectItem>)}</SelectContent></Select></Field>
-        </div></Card>
-      <Card className="p-5 space-y-4"><h2 className="font-semibold">Patient</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <Field label="Initials *"><Input value={f.patientInitials} onChange={set("patientInitials")} required /></Field>
-          <Field label="Age *"><Input value={f.age} onChange={set("age")} required /></Field>
-          <Field label="Sex *"><Select value={f.sex} onValueChange={set("sex")}><SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger><SelectContent><SelectItem value="M">Male</SelectItem><SelectItem value="F">Female</SelectItem></SelectContent></Select></Field>
-          <Field label="Folder no."><Input value={f.folderNo} onChange={set("folderNo")} /></Field>
-        </div>
-        <Field label="Working diagnosis *"><Input value={f.diagnosis} onChange={set("diagnosis")} required /></Field>
-        <Field label="History *"><Textarea rows={4} value={f.history} onChange={set("history")} required /></Field>
-        <Field label="Examination (incl. vitals) *"><Textarea rows={4} value={f.exam} onChange={set("exam")} required placeholder="BP, HR, RR, SpO2, Temp, GCS, glucose, then findings" /></Field>
-        <Field label="Investigations *"><Textarea rows={4} value={f.investigations} onChange={set("investigations")} required placeholder="Bloods, ECG, imaging, results available so far" /></Field>
-        <Field label="Reason for referral / request *"><Textarea rows={2} value={f.reason} onChange={set("reason")} required /></Field>
-        <Field label="Suggested priority *">
-          <div className="grid sm:grid-cols-3 gap-2">{[["P1","Emergency, needs transfer now"],["P2","Urgent, within hours"],["P3","Routine / advice"]].map(([p,d]) => (
-            <button type="button" key={p} data-testid={`button-priority-${p}`} onClick={() => setF({ ...f, suggestedPriority: p })} className={`text-left rounded-md border p-3 transition ${f.suggestedPriority===p ? "border-primary ring-2 ring-primary/30" : "hover-elevate"}`}><span className={`inline-block rounded px-2 py-0.5 text-xs font-bold ${pColor[p]}`}>{p}</span><p className="text-sm mt-1">{d}</p></button>))}</div>
-        </Field>
-      </Card>
-      <Card className="p-4"><ImagePicker images={images} onChange={setImages}/></Card>
-      <Card className="p-4 space-y-2 text-sm"><label className="flex gap-3 items-start"><input type="checkbox" className="mt-1 h-4 w-4" checked={!!f.consent} onChange={(e) => setF({ ...f, consent: e.target.checked })} data-testid="checkbox-consent" />
-        <span>I confirm this information is shared only for this patient's care and transfer, contains the minimum needed, and the patient (or their representative) has been told it is being shared where this is possible. *</span></label>
-        <p className="text-xs text-muted-foreground pl-7">Read how this information is used, kept and deleted in the <Link href="/privacy" className="underline">privacy notice</Link>.</p></Card>
-      <Button type="submit" size="lg" className="w-full" disabled={m.isPending || !f.consent || !f.team} data-testid="button-submit">{m.isPending ? "Sending..." : "Submit referral"}</Button>
-    </form></Shell>;
-}
+function Field({ label, children, hint }: any) { const id = useId(); return <div className="space-y-1.5"><Label htmlFor={id} className="text-sm font-medium">{label}</Label>{isValidElement(children) ? cloneElement(children as any, { id }) : children}{hint && <p className="text-xs text-muted-foreground">{hint}</p>}</div>; }
 
 function StatusPage({ params }: any) {
   const [ref, setRef] = useState(params?.ref || ""); const [phone, setPhone] = useState(""); const [data, setData] = useState<any>(null); const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
@@ -130,58 +66,63 @@ function StatusPage({ params }: any) {
 /* ---------- SHELL / AUTH ---------- */
 function Shell({ children, public: pub, me, onLogout, alertCount, onSettings, admin }: any) {
   const [loc] = useLocation();
+  const { user } = useAuth();
   const nav = [["/queue", "Queue", Inbox], ["/oncall", "On call", CalendarDays], ["/catchments", "Catchments", MapPin], ["/doctors", "Doctors", Stethoscope], ...(admin ? [["/admin", "Admin", ShieldCheck]] : [])] as const;
-  return <div className="min-h-screen bg-background"><header className="border-b bg-card sticky top-0 z-30"><div className="max-w-6xl mx-auto px-4 h-14 flex items-center gap-2">
-    <span className="text-primary"><Logo /></span><span className={`font-semibold ${pub ? "" : "hidden md:inline"}`}>BaraBridge</span>
-    {!pub && <nav className="flex gap-0.5 ml-2 overflow-x-auto">{(nav as unknown as any[]).map(([h,l,I]: any) => <Link key={h} href={h}><Button variant={loc===h?"secondary":"ghost"} size="sm" data-testid={`link-${l}`} aria-label={l}><I className="h-4 w-4 lg:mr-1" /><span className="hidden lg:inline">{l}</span></Button></Link>)}</nav>}
+  return <div className="min-h-screen bg-background"><header className="border-b bg-card sticky top-0 z-30"><div className="max-w-6xl mx-auto px-4 py-3 min-h-14 flex flex-wrap items-center gap-2">
+    <Link href="/" className="flex items-center gap-2 font-semibold" aria-label="BaraBridge home"><span className="text-primary"><Logo /></span><span>BaraBridge</span></Link>
+    {pub && <nav aria-label="Account navigation" className="ml-auto flex flex-wrap gap-x-4 gap-y-2 text-sm"><Link href="/" className="underline">Home</Link><Link href={user && user.role !== "referrer" ? "/queue" : "/login"} className="underline">{user && user.role !== "referrer" ? "Referral desk" : "Staff sign-in"}</Link><Link href="/portal" className="underline">{user?.role === "referrer" ? "My consults" : "Referrer portal"}</Link></nav>}
+    {!pub && <nav aria-label="Staff navigation" className="order-last w-full flex flex-wrap gap-1 md:order-none md:w-auto">{(nav as unknown as any[]).map(([h,l,I]: any) => <Link key={h} href={h} className={`inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium ${loc===h ? "bg-secondary text-secondary-foreground" : "hover:bg-accent"}`} aria-current={loc===h?"page":undefined} data-testid={`link-${l}`}><I className="h-4 w-4" />{l}</Link>)}</nav>}
     {!pub && <div className="ml-auto flex items-center gap-1 text-sm">
       <Button size="icon" variant="ghost" onClick={onSettings} aria-label="Alert settings" className="relative" data-testid="button-alerts">{alertCount ? <BellRing className="h-4 w-4 text-red-600" /> : <Bell className="h-4 w-4" />}{alertCount ? <span className="absolute -top-0.5 -right-0.5 bg-red-600 text-white text-[10px] rounded-full h-4 min-w-4 px-1 grid place-items-center">{alertCount}</span> : null}</Button>
       <span className="font-medium hidden sm:inline">{me}</span><Button size="icon" variant="ghost" onClick={onLogout} aria-label="Log out"><LogOut className="h-4 w-4" /></Button></div>}
   </div></header><main className="max-w-6xl mx-auto px-4 py-6">{children}</main>
-  <footer className="max-w-6xl mx-auto px-4 pb-6 text-xs text-muted-foreground"><Link href="/privacy" className="underline">Privacy notice (POPIA)</Link></footer></div>;
+  <footer className="max-w-6xl mx-auto px-4 pb-6 text-sm text-muted-foreground"><nav aria-label="Help and referral navigation" className="flex flex-wrap gap-x-4 gap-y-2"><Link href="/" className="underline">Home</Link><Link href="/followup" className="underline">Follow up a referral</Link><Link href="/status" className="underline">Check referral status</Link><Link href="/privacy" className="underline">Privacy notice (POPIA)</Link></nav></footer></div>;
 }
 
-function Login({ onIn }: { onIn: (u: Me) => void }) {
+function Login() {
+  const { signIn, expired } = useAuth();
   const [username, setU] = useState(""); const [password, setP] = useState(""); const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
-  const go = async (e: any) => { e.preventDefault(); unlockAudio(); askNotify(); setBusy(true); setErr("");
-    try { const r = await (await apiRequest("POST", "/api/login", { username, password })).json(); if (r.user.role === "referrer") throw new Error("Use referring clinician sign-in instead."); session.token = r.token; onIn(r.user); }
+  const go = async (e: any) => { e.preventDefault(); unlockAudio(); setBusy(true); setErr("");
+    try { const r = await (await apiRequest("POST", "/api/login", { username, password }, { signal: AbortSignal.timeout(20000) })).json(); signIn(r); if (r.user.role !== "referrer") askNotify(); }
     catch (x: any) { setErr(String(x.message || "").replace(/^\d+:\s*/, "").replace(/^\{"message":"(.*)"\}$/, "$1") || "Sign-in failed"); } finally { setBusy(false); } };
-  return <div className="min-h-screen grid place-items-center bg-background p-4"><Card className="p-6 w-full max-w-sm space-y-4"><div className="flex items-center gap-2 text-primary"><Logo /><span className="font-semibold text-foreground">BaraBridge</span></div>
+  return <Shell public><div className="max-w-sm mx-auto py-4 sm:py-8"><Card className="p-6 space-y-4"><h1 className="text-xl font-semibold">Receiving staff sign-in</h1>
+    {expired && <p role="status" className="text-sm text-muted-foreground">Your session ended. Sign in again to continue.</p>}
     <p className="text-sm text-muted-foreground">Sign in with your own account. Every case you open or change is recorded. Allow notifications so P1 alerts reach you.</p>
     <form className="space-y-3" onSubmit={go}><Field label="Username"><Input autoComplete="username" value={username} onChange={(e) => setU(e.target.value)} required data-testid="input-username" /></Field>
     <Field label="Password"><Input type="password" autoComplete="current-password" value={password} onChange={(e) => setP(e.target.value)} required data-testid="input-password" /></Field>
-    {err && <p className="text-sm text-destructive">{err}</p>}<Button className="w-full" disabled={busy} data-testid="button-login">{busy ? "Signing in..." : "Sign in"}</Button></form>
+    {err && <p role="alert" className="text-sm text-destructive">{err}</p>}<Button className="w-full" disabled={busy} data-testid="button-login">{busy ? "Signing in..." : "Sign in"}</Button></form>
+    <p className="text-sm text-muted-foreground">MEU, TEU and SEU staff accounts are created by your unit administrator. Ask them for an account if you haven't received one.</p>
     <p className="text-xs text-muted-foreground">Sessions end after 30 minutes of inactivity. Forgot your password? Ask a BaraBridge admin to reset it.</p>
-    <div className="flex gap-4 flex-wrap text-sm"><Link href="/" className="underline">Home</Link><Link href="/refer" className="underline">Referrer sign-in</Link><Link href="/followup" className="underline">Follow up referral</Link><Link href="/privacy" className="underline">Privacy notice</Link></div></Card></div>;
+    <p className="text-sm">Sending a patient referral? <Link href="/portal" className="underline font-medium">Referrer sign-up / sign-in</Link></p></Card></div></Shell>;
 }
 
 /* ---------- LANDING (public entry) ---------- */
 function Landing() {
-  return <div className="min-h-screen bg-background flex flex-col"><header className="border-b bg-card"><div className="max-w-4xl mx-auto px-4 h-14 flex items-center gap-2"><span className="text-primary"><Logo /></span><span className="font-semibold">BaraBridge</span><span className="ml-auto text-xs text-muted-foreground hidden sm:inline">Inter-hospital referrals &amp; consults</span></div></header>
-    <main className="flex-1 flex items-center"><div className="max-w-4xl mx-auto px-4 py-10 w-full">
+  const { user } = useAuth();
+  return <Shell public><div className="max-w-4xl mx-auto py-4 sm:py-10 w-full">
       <h1 className="text-2xl font-semibold mb-1">Welcome to BaraBridge</h1>
-      <p className="text-sm text-muted-foreground mb-8">Choose how you want to continue. Receiving-staff accounts sign in to the referral desk; referring clinicians use the secure referral PWA.</p>
+      <p className="text-sm text-muted-foreground mb-6">Sending a referral? Use the referrer portal. Receiving and managing referrals? Use the staff referral desk.</p>
+      {user && <Card className="p-4 mb-6 space-y-2"><p className="text-sm">Signed in as {user.name}.</p><Link href={workspaceFor(user)} className="underline font-medium">{user.role === "referrer" ? "Continue to my consults" : "Continue to referral desk"}</Link></Card>}
       <div className="grid sm:grid-cols-2 gap-4">
         <Link href="/login"><Card className="p-6 hover-elevate space-y-3"><div className="flex items-center gap-2 text-primary"><Inbox className="h-6 w-6" /><span className="font-semibold text-foreground">Staff sign-in</span></div>
           <p className="text-sm text-muted-foreground">Receiving teams: open the referral desk, review consults, send advice and track transfers. P1 alerts and the on-call roster.</p></Card></Link>
         <Link href="/portal"><Card className="p-6 hover-elevate space-y-3"><div className="flex items-center gap-2 text-primary"><Stethoscope className="h-6 w-6" /><span className="font-semibold text-foreground">I'm a referring clinician</span></div>
-          <p className="text-sm text-muted-foreground">Doctors, nurses and other professionals: sign up once, your details are stored and auto-fill every referral. See your consults, clinical advice and the full on-call roster.</p></Card></Link>
+          <p className="text-sm text-muted-foreground">Doctors, nurses and other professionals: create an account, get verified, then send referrals. See your consults, clinical advice and the on-call roster.</p></Card></Link>
       </div>
-      <div className="flex gap-4 flex-wrap text-sm mt-8 text-muted-foreground"><Link href="/refer" className="underline">Referrer sign-up / sign-in</Link><Link href="/followup" className="underline">Follow up a referral</Link><Link href="/status" className="underline">Check referral status</Link><Link href="/privacy" className="underline">Privacy notice (POPIA)</Link></div>
-    </div></main>
-    <footer className="max-w-4xl mx-auto px-4 pb-6 text-xs text-muted-foreground">BaraBridge · inter-hospital referral and consult platform</footer></div>;
+    </div></Shell>;
 }
 
-function ChangePassword({ me, onDone }: { me: Me; onDone: () => void }) {
-  const [cur, setCur] = useState(""); const [n1, setN1] = useState(""); const [n2, setN2] = useState(""); const [err, setErr] = useState("");
+function ChangePassword({ me, onDone }: { me: Me; onDone: () => Promise<void> }) {
+  const [cur, setCur] = useState(""); const [n1, setN1] = useState(""); const [n2, setN2] = useState(""); const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
   const go = async (e: any) => { e.preventDefault(); setErr(""); if (n1 !== n2) return setErr("New passwords do not match"); if (n1.length < 10) return setErr("Use at least 10 characters");
-    try { await apiRequest("POST", "/api/me/password", { current: cur, next: n1 }); onDone(); } catch (x: any) { setErr(String(x.message).includes("incorrect") ? "Current password is incorrect" : "Could not change password"); } };
-  return <div className="min-h-screen grid place-items-center bg-background p-4"><Card className="p-6 w-full max-w-sm space-y-4"><div className="flex items-center gap-2"><KeyRound className="h-5 w-5 text-primary" /><span className="font-semibold">Set your own password</span></div>
+    let changed = false; setBusy(true);
+    try { await apiRequest("POST", "/api/me/password", { current: cur, next: n1 }); changed = true; await onDone(); } catch (x: any) { setErr(changed ? "Your password was saved. Sign out and sign in with your new password to continue." : String(x.message).includes("incorrect") ? "Current password is incorrect" : "Could not change password. Try again."); } finally { setBusy(false); } };
+  return <div className="max-w-sm mx-auto py-6"><Card className="p-6 space-y-4"><div className="flex items-center gap-2"><KeyRound className="h-5 w-5 text-primary" /><h1 className="font-semibold">Set your own password</h1></div>
     <p className="text-sm text-muted-foreground">Hi {me.name}. Your account has a temporary password. Choose a new one (10+ characters) that only you know.</p>
     <form className="space-y-3" onSubmit={go}><Field label="Temporary password"><Input type="password" value={cur} onChange={(e) => setCur(e.target.value)} required data-testid="input-current" /></Field>
     <Field label="New password"><Input type="password" autoComplete="new-password" value={n1} onChange={(e) => setN1(e.target.value)} required data-testid="input-new" /></Field>
     <Field label="Repeat new password"><Input type="password" autoComplete="new-password" value={n2} onChange={(e) => setN2(e.target.value)} required data-testid="input-new2" /></Field>
-    {err && <p className="text-sm text-destructive">{err}</p>}<Button className="w-full" data-testid="button-setpw">Save password</Button></form></Card></div>;
+    {err && <p role="alert" className="text-sm text-destructive">{err}</p>}<Button className="w-full" disabled={busy} data-testid="button-setpw">{busy ? "Saving..." : "Save password"}</Button></form></Card></div>;
 }
 
 function Privacy() {
@@ -203,7 +144,7 @@ function Privacy() {
 
 /* ---------- ALERT ENGINE ---------- */
 function useAlerts(me: string, st: AlertSettings) {
-  const { data = [] } = useQuery<Referral[]>({ queryKey: ["/api/referrals"], refetchInterval: 10000 });
+  const { data = [], isLoading, error, refetch } = useQuery<Referral[]>({ queryKey: ["/api/referrals"], refetchInterval: 10000 });
   const [tick, setTick] = useState(0);
   useEffect(() => { const t = setInterval(() => setTick(x => x + 1), 15000); return () => clearInterval(t); }, []);
   const seen = useRef<Set<number> | null>(null); const lastRem = useRef<Record<number, number>>({}); const lastAlarm = useRef(0);
@@ -226,7 +167,7 @@ function useAlerts(me: string, st: AlertSettings) {
       notify(r.status === "waiting" ? "Waiting-list reminder" : `Overdue ${r.priority} consult`, `${r.ref} · ${r.team} · ${ago(r.createdAt)}`, "rem-" + r.id); }
     if (rem && st.sound) sounds.reminder();
   }, [data, tick, st]);
-  return { p1, due, data };
+  return { p1, due, data, isLoading, error, refetch };
 }
 
 function P1Alarm({ list, me, onOpen }: { list: Referral[]; me: string; onOpen: (r: Referral) => void }) {
@@ -423,56 +364,46 @@ function Desk({ user, onLogout }: { user: Me; onLogout: () => void }) {
   const me = user.name; const admin = user.role === "admin"; const manager=admin||user.role==="unit_admin";
   const [st, setSt] = useState<AlertSettings>(defaultSettings); const [settings, setSettings] = useState(false); const [openId, setOpenId] = useState<number|null>(null);
   useEffect(() => { apiRequest("GET", "/api/settings").then(r => r.json()).then(v => v && setSt({ ...defaultSettings, ...v })).catch(() => {}); }, []);
-  const { p1, due, data } = useAlerts(me, st);
+  const { p1, due, data, isLoading, error, refetch } = useAlerts(me, st);
   useEffect(() => { document.title = (p1.length ? `(${p1.length}) P1! ` : due.length ? `(${due.length}) ` : "") + "BaraBridge"; }, [p1.length, due.length]);
   const open = (r: Referral) => setOpenId(r.id);
   return <Shell me={me} admin={manager} onLogout={onLogout} alertCount={p1.length + due.length} onSettings={() => setSettings(true)}>
     <Switch><Route path="/oncall"><OnCall me={user}/></Route><Route path="/catchments" component={Catchments} /><Route path="/doctors" component={Doctors} />
-      <Route path="/admin">{manager ? <Admin me={user} /> : <Card className="p-6">Admins only.</Card>}</Route><Route><Queue me={me} user={user} data={data} st={st} onOpen={open} /></Route></Switch>
+      <Route path="/admin">{manager ? <Admin me={user} /> : <Card className="p-6 space-y-3"><p>This page is for administrators.</p><Link href="/queue" className="block underline">Back to referral queue</Link></Card>}</Route><Route>{isLoading ? <p role="status">Loading referral queue...</p> : error ? <Card className="p-5 space-y-3"><p role="alert">Couldn't load the referral queue. Check your connection and try again.</p><Button onClick={() => refetch()}>Try again</Button></Card> : <Queue me={me} user={user} data={data} st={st} onOpen={open} />}</Route></Switch>
     <P1Alarm list={openId ? p1.filter(r => r.id !== openId) : p1} me={me} onOpen={open} />
     <SettingsSheet open={settings} onClose={() => setSettings(false)} st={st} setSt={setSt} due={due} onOpen={open} admin={admin} />
     <Detail key={openId} r={openId ? data.find(x => x.id === openId) || null : null} me={me} user={user} onClose={() => {setOpenId(null);queryClient.invalidateQueries({queryKey:["/api/referrals"]});}} />
   </Shell>;
 }
 
-const STAFF_TOKEN_KEY = "bb_staff_token";
-const readStaffToken = () => { try { return sessionStorage.getItem(STAFF_TOKEN_KEY) || ""; } catch { return ""; } };
-const clearStaffToken = () => { try { sessionStorage.removeItem(STAFF_TOKEN_KEY); } catch {} };
+function SessionGate({ children }: { children: ReactNode }) {
+  const { restoring, restoreError, retryRestore, signOut } = useAuth();
+  if (restoring) return <Shell public><div className="max-w-md mx-auto space-y-3"><p role="status">Restoring your session...</p><p className="text-sm text-muted-foreground">You can return Home or sign in again.</p><Button variant="outline" onClick={() => signOut("/login")}>Sign in instead</Button></div></Shell>;
+  if (restoreError) return <Shell public><Card className="max-w-md mx-auto p-5 space-y-4"><h1 className="text-xl font-semibold">Couldn't restore your session</h1><p role="alert">{restoreError}</p><div className="flex flex-wrap gap-2"><Button onClick={retryRestore}>Try again</Button><Button variant="outline" onClick={() => signOut("/login")}>Sign in again</Button></div></Card></Shell>;
+  return children;
+}
+
+function StaffEntry() {
+  const { user, signOut, refreshUser } = useAuth();
+  if (!user) return <Login/>;
+  if (user.role === "referrer") return <Shell public><Card className="max-w-md mx-auto p-5 space-y-4"><h1 className="text-xl font-semibold">You're signed in as a referrer</h1><p>Your consults are in the referrer portal. Receiving staff use an account created by their unit administrator.</p><Link href="/portal" className="block underline font-medium">Continue to my consults</Link><Button variant="outline" onClick={() => signOut("/login")}>Switch to a staff account</Button></Card></Shell>;
+  if (user.mustChange) return <Shell public><ChangePassword me={user} onDone={refreshUser}/><div className="max-w-sm mx-auto"><Button variant="ghost" onClick={() => signOut()}>Sign out</Button></div></Shell>;
+  return <Desk user={user} onLogout={() => signOut()}/>;
+}
+
+function AppRoutes() {
+  return <Switch>
+    <Route path="/refer/:team" component={({params}:any) => <SessionGate><Shell public><Portal initialTeam={params.team}/></Shell></SessionGate>}/>
+    <Route path="/refer"><SessionGate><Shell public><Portal/></Shell></SessionGate></Route>
+    <Route path="/portal"><SessionGate><Shell public><Portal/></Shell></SessionGate></Route>
+    <Route path="/followup"><Shell public><ReferrerPortal/></Shell></Route>
+    <Route path="/privacy" component={Privacy}/><Route path="/status/:ref" component={StatusPage}/><Route path="/status" component={StatusPage}/>
+    {["/login", "/queue", "/admin", "/oncall", "/catchments", "/doctors"].map(path => <Route key={path} path={path}><SessionGate><StaffEntry/></SessionGate></Route>)}
+    <Route path="/" component={Landing}/>
+    <Route><Shell public><Card className="max-w-md mx-auto p-5 space-y-3"><h1 className="text-xl font-semibold">Page not found</h1><p>This link doesn't match a BaraBridge page. Choose Home, Staff sign-in or Referrer portal above.</p><Link href="/" className="underline font-medium">Back to Home</Link></Card></Shell></Route>
+  </Switch>;
+}
 
 export default function App() {
-  const [staffUser, setStaffUser] = useState<Me|null>(null); const [expired, setExpired] = useState(false);
-  const [restoring, setRestoring] = useState(() => Boolean(readStaffToken()));
-  useEffect(() => {
-    session.onExpire = () => { clearStaffToken(); setStaffUser(null); setExpired(true); queryClient.clear(); };
-    const token = readStaffToken();
-    if (token) {
-      session.token = token;
-      apiRequest("GET", "/api/me").then(r => r.json()).then(({ user }) => {
-        if (!user || user.role === "referrer") throw new Error("Staff account required");
-        setStaffUser(user);
-        if (window.location.hash === "#/" || !window.location.hash) window.location.hash = "#/queue";
-      }).catch(() => { session.token = ""; clearStaffToken(); }).finally(() => setRestoring(false));
-    }
-    return () => { session.onExpire = undefined; };
-  }, []);
-  const onStaffLogin = (user: Me) => {
-    setStaffUser(user); setExpired(false);
-    try { sessionStorage.setItem(STAFF_TOKEN_KEY, session.token); } catch {}
-    if (window.location.hash === "#/login" || window.location.hash === "#/" || !window.location.hash) window.location.hash = "#/queue";
-  };
-  const logout = async () => {
-    try { await apiRequest("POST", "/api/me/logout"); } catch {}
-    session.token = ""; clearStaffToken(); queryClient.clear(); setStaffUser(null); setExpired(false);
-    window.location.hash = "#/";
-  };
-  const staffScreen = restoring
-    ? <div className="min-h-screen grid place-items-center text-sm text-muted-foreground">Restoring your session...</div>
-    : staffUser
-    ? staffUser.mustChange
-      ? <ChangePassword me={staffUser} onDone={() => setStaffUser(u => u ? { ...u, mustChange: false } : null)} />
-      : <Desk user={staffUser} onLogout={logout} />
-    : <>{expired && <div className="fixed top-3 inset-x-0 z-50 flex justify-center"><div className="bg-amber-100 text-amber-900 text-sm rounded-md px-3 py-2 shadow">You were signed out after inactivity.</div></div>}<Login onIn={onStaffLogin} /></>;
-  return <QueryClientProvider client={queryClient}><Toaster /><Router hook={useHashLocation}><Switch>
-    <Route path="/refer/:team" component={({params}:any) => <Shell public><Portal initialTeam={params.team}/></Shell>}/><Route path="/refer"><Shell public><Portal/></Shell></Route><Route path="/followup"><Shell public><ReferrerPortal/></Shell></Route><Route path="/privacy" component={Privacy} /><Route path="/status/:ref" component={StatusPage} /><Route path="/status" component={StatusPage} /><Route path="/portal"><Shell public><Portal/></Shell></Route><Route path="/login">{staffScreen}</Route><Route path="/queue">{staffScreen}</Route><Route path="/">{staffUser || restoring || expired ? staffScreen : <Landing />}</Route><Route>{staffScreen}</Route>
-  </Switch></Router></QueryClientProvider>;
+  return <QueryClientProvider client={queryClient}><Toaster/><Router hook={useHashLocation}><AuthProvider><AppRoutes/></AuthProvider></Router></QueryClientProvider>;
 }

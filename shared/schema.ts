@@ -19,7 +19,7 @@ export const referralInput = z.object({
 export type ReferralInput = z.infer<typeof referralInput>;
 export type Status = "pending"|"accepted"|"declined"|"waiting"|"advised";
 export type Referral = Omit<ReferralInput, "team" | "images"> & { team: Team | null; images?: ImageAttachment[]; openedAt?: string|null; openedBy?: string; latestFollowupAt?: string|null; followupSeenAt?: string|null; purgedAt?: string|null; locSource?: string; id:number; ref:string; createdAt:string; priority:"P1"|"P2"|"P3"; status:Status; decisionNote:string; decidedBy:string; decidedAt:string|null;
-  bedStatus:string; bedWard:string; remindAt:string|null; ackBy:string; ackAt:string|null };
+  bedStatus:string; bedWard:string; remindAt:string|null; ackBy:string; ackAt:string|null; referrerId?:number|null };
 export const decisionInput = z.object({ team: z.enum(TEAMS).optional(), status: z.enum(["pending","accepted","declined","waiting","advised"]).optional(), priority: z.enum(["P1","P2","P3"]).optional(),
   decisionNote: z.string().max(5000).optional(), decidedBy: z.string().optional(), bedStatus: z.string().optional(), bedWard: z.string().optional(),
   remindAt: z.string().nullable().optional(), ack: z.string().optional(),
