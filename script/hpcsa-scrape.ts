@@ -355,7 +355,11 @@ async function main() {
   await run(surnames, skipDb);
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+// The web server imports the search helpers from this module. Only run the
+// command-line sweep when this file itself is the process entry point.
+if (process.argv[1] && /(?:^|[\\/])hpcsa-scrape\.(?:ts|js|cjs|mjs)$/.test(process.argv[1])) {
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}
