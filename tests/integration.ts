@@ -28,6 +28,10 @@ try {
   const root=await db.addUser("qa_root_"+run,"QA global admin","admin",password); createdUsers.push(root.id);
   const rootToken=await login(root.username); creds.root={username:root.username,password:password+"x",token:rootToken};
   await api("GET","/api/referrals",undefined,undefined,401);
+  const referrer=await db.addReferrer({username:"qa_referrer_"+run,name:"QA Referrer",password,email:`qa-${run}@example.invalid`,phone:"0700000000",hospital:"QA Facility",department:"ED",specialty:"other",profession:"doctor",hpcsa:""});
+  createdUsers.push(referrer.id);
+  await db.approveReferrer(referrer.id,"QA global admin");
+  const referrerToken=await api("POST","/api/login",{username:referrer.username,password}).then(r=>r.token);
   for(const team of ["MEU","TEU","SEU"]){
     creds[team]={};
     for(const role of ["unit_admin","clinician"]){
@@ -38,7 +42,7 @@ try {
   }
   const image={name:"qa.png",mime:"image/png",data:"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX4sAAAAASUVORK5CYII="};
   for(const team of ["MEU","TEU","SEU"]){
-    const receipt=await api("POST","/api/referrals",{team,consultType:"advice",doctorName:"QA referrer",hospital:`QA ${team} Facility`,phone:"0700000000",specialty:"other",patientInitials:"Q.T.",age:"30",sex:"M",diagnosis:"QA ONLY "+run,history:"Synthetic test history",exam:"Synthetic test examination",investigations:"Synthetic test results",reason:"Advice request",suggestedPriority:"P3",consent:true,images:[image],lat:"-26.1",lon:"27.9"});
+    const receipt=await api("POST","/api/referrals",{team,consultType:"advice",doctorName:"QA referrer",hospital:`QA ${team} Facility`,phone:"0700000000",specialty:"other",patientInitials:"Q.T.",age:"30",sex:"M",diagnosis:"QA ONLY "+run,history:"Synthetic test history",exam:"Synthetic test examination",investigations:"Synthetic test results",reason:"Advice request",suggestedPriority:"P3",consent:true,images:[image],lat:"-26.1",lon:"27.9"},referrerToken);
     const ownList=await api("GET","/api/referrals",undefined,creds[team].clinician.token);
     assert(ownList.every((r:any)=>r.team===team));const r=ownList.find((r:any)=>r.ref===receipt.ref);assert(r);
     createdCases.push(r.id);creds[team].receipt=receipt;creds[team].caseId=r.id;

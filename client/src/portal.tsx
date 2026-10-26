@@ -84,15 +84,16 @@ function ReferralDetail({ r, onClose }: { r: Referral; onClose: () => void }) {
 
 /* ---------- new consult form (autofills the referrer's details) ---------- */
 const emptyForm = { team: "", consultType: "transfer", consent: false, specialty: "", currentLocation: "", bedNeeded: "", lat: "", lon: "", patientInitials: "", age: "", sex: "", folderNo: "", diagnosis: "", history: "", exam: "", investigations: "", reason: "", suggestedPriority: "P2" };
-function ConsultForm({ me, onDone }: { me: any; onDone: () => void }) {
+function ConsultForm({ me, onDone, initialTeam }: { me: any; onDone: () => void; initialTeam?: string }) {
   const { toast } = useToast();
   // Referring-doctor fields are prefilled from the stored profile (the
   // "autofill" requirement) and stay editable in case details changed.
-  const [f, setF] = useState<any>({
-    ...emptyForm,
+  const freshForm = () => ({
+    ...emptyForm, team: ["MEU", "TEU", "SEU"].includes(initialTeam || "") ? initialTeam : "",
     doctorName: me.name || "", hospital: me.hospital || "", department: me.department || "",
     phone: me.phone || "", email: me.email || "",
   });
+  const [f, setF] = useState<any>(freshForm);
   const [images, setImages] = useState<UploadImage[]>([]);
   const [done, setDone] = useState<any>(null);
   const [geo, setGeo] = useState("");
@@ -108,7 +109,7 @@ function ConsultForm({ me, onDone }: { me: any; onDone: () => void }) {
   });
   if (done) return <Card className="p-6 space-y-3"><Check className="mx-auto h-10 w-10 text-primary" /><h2 className="text-lg font-semibold text-center">Consult sent to {f.team || "the unit"}</h2>
     <p className="text-sm">Reference <span className="font-mono font-bold" data-testid="text-ref">{done.ref}</span>. Track it under My consults; advice and decisions appear there and in your secure portal.</p>
-    <div className="flex gap-2 flex-wrap"><Button onClick={onDone}>Back to dashboard</Button><Button variant="outline" onClick={() => { setF({ ...emptyForm }); setImages([]); setDone(null); }}>New consult</Button></div></Card>;
+    <div className="flex gap-2 flex-wrap"><Button onClick={onDone}>Back to dashboard</Button><Button variant="outline" onClick={() => { setF(freshForm()); setImages([]); setDone(null); }}>New consult</Button></div></Card>;
   return <form className="space-y-5" onSubmit={(e) => { e.preventDefault(); m.mutate(); }}>
     <Card className="p-5 space-y-4"><div className="flex items-center gap-2"><UserIcon className="h-4 w-4 text-primary" /><h2 className="font-semibold">Your details</h2><Badge variant="outline" className="ml-auto">Auto-filled — edit if changed</Badge></div>
       <div className="grid sm:grid-cols-2 gap-4">
@@ -171,7 +172,7 @@ function CardUpload({ me, onUploaded }: { me: any; onUploaded: () => void }) {
   };
   const shown = me?.verifyStatus === "card_pending" || me?.verifyStatus === "verified";
   return <Card className="p-4 space-y-3"><div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-primary" /><p className="font-semibold text-sm">Verify your account</p></div>
-    <p className="text-xs text-muted-foreground">{me?.verifyStatus === "verified" ? "Verified against the HPCSA register." : "Upload a photo of your staff card (showing your name, facility and, where present, HPCSA/DOH details). The owner verifies it — you can keep sending consults in the meantime."}</p>
+    <p className="text-xs text-muted-foreground">{me?.verifyStatus === "verified" ? "Your account is verified." : "Upload a photo of your staff card (showing your name, facility and, where present, HPCSA/DOH details). You can send referrals after the owner verifies your account."}</p>
     {img && <img src={`data:${mime};base64,${img}`} alt="Staff card preview" className="max-h-56 rounded border" />}
     <div className="flex flex-wrap gap-2"><Input type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => pick(e.target.files)} /><Button onClick={send} disabled={busy || !img}>{busy ? "Sending..." : "Send staff card"}</Button></div>
     {err && <p className="text-sm text-destructive" role="alert">{err}</p>}</Card>;
@@ -188,12 +189,12 @@ function PortalAuth({ onIn }: { onIn: (u: any) => void }) {
   const doLogin = async (e: any) => { e.preventDefault(); setBusy(true); setErr("");
     try { const r = await (await apiRequest("POST", "/api/login", { username: u, password: p })).json();
       if (r.user.role !== "referrer") return setErr("This is a staff account, not a referral-PWA account. Use Staff sign-in on the home page.");
-      session.token = r.token; saveProfile(r.user); onIn(r.user);
+      session.token = r.token; localStorage.setItem(TK, r.token); saveProfile(r.user); onIn(r.user);
     } catch (x: any) { setErr(messageOf(x)); } finally { setBusy(false); } };
   const doSignup = async (e: any) => { e.preventDefault(); setBusy(true); setErr("");
     try { const d = await (await apiRequest("POST", "/api/referrer/signup", { ...su, name: su.name, email: su.email, phone: su.phone, hospital: su.hospital, department: su.department, specialty: su.specialty, profession: su.profession, hpcsa: su.hpcsa })).json();
       const r = await (await apiRequest("POST", "/api/login", { username: su.username, password: su.password })).json();
-      session.token = r.token; saveProfile(r.user); toast({ title: d.autoApproved ? "Verified against HPCSA" : "Account created", description: d.message }); onIn(r.user);
+      session.token = r.token; localStorage.setItem(TK, r.token); saveProfile(r.user); toast({ title: d.autoApproved ? "Verified against HPCSA" : "Account created", description: d.message }); onIn(r.user);
     } catch (x: any) { setErr(messageOf(x)); } finally { setBusy(false); } };
   return <div className="max-w-md mx-auto space-y-5">
     <div className="flex gap-1 rounded-md border p-1">{(["login", "signup"] as const).map((mm) => <button key={mm} onClick={() => { setMode(mm); setErr(""); }} className={`flex-1 rounded px-3 py-1.5 text-sm font-medium ${mode === mm ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>{mm === "login" ? "Sign in" : "Create account"}</button>)}</div>
@@ -221,8 +222,8 @@ function PortalAuth({ onIn }: { onIn: (u: any) => void }) {
 }
 
 /* ---------- dashboard ---------- */
-function Dashboard({ me, onLogout }: { me: any; onLogout: () => void }) {
-  const [tab, setTab] = useState<"consults" | "roster" | "new">("consults");
+function Dashboard({ me, onLogout, onRefresh, initialTeam }: { me: any; onLogout: () => void; onRefresh: () => void; initialTeam?: string }) {
+  const [tab, setTab] = useState<"consults" | "roster" | "new">(initialTeam ? "new" : "consults");
   const [openId, setOpenId] = useState<number | null>(null);
   const { data: list = [], isLoading } = useQuery<Referral[]>({ queryKey: ["/api/referrer/my-referrals"], refetchInterval: 20000 });
   const verified = me.verifyStatus === "verified";
@@ -230,10 +231,10 @@ function Dashboard({ me, onLogout }: { me: any; onLogout: () => void }) {
     <div className="flex flex-wrap items-center gap-3"><div className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-primary" /><div><p className="font-semibold">{me.name}</p><p className="text-xs text-muted-foreground">{me.hospital} · {me.specialty} · {me.profession}</p></div></div>
       <Badge className={verified ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100" : "bg-amber-100 text-amber-900 dark:bg-amber-900 dark:text-amber-100"}>{verified ? "Verified" : "Verification pending"}</Badge>
       <Button size="sm" variant="ghost" className="ml-auto" onClick={onLogout}><LogOut className="h-4 w-4 mr-1" />Sign out</Button></div>
-    {!verified && <CardUpload me={me} onUploaded={() => {}} />}
+    {!verified && <><CardUpload me={me} onUploaded={onRefresh} /><Button size="sm" variant="outline" onClick={onRefresh}>Check verification status</Button></>}
     <div className="flex gap-1 rounded-md border p-1 w-fit">{([["consults", "My consults", ClipboardList], ["new", "New consult", Send], ["roster", "On-call roster", CalendarDays]] as const).map(([t, l, I]) =>
       <button key={t} onClick={() => setTab(t as any)} className={`flex items-center gap-1.5 rounded px-3 py-1.5 text-sm font-medium ${tab === t ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}><I className="h-4 w-4" />{l}</button>)}</div>
-    {tab === "new" && <ConsultForm me={me} onDone={() => setTab("consults")} />}
+    {tab === "new" && (verified ? <ConsultForm me={me} initialTeam={initialTeam} onDone={() => setTab("consults")} /> : <Card className="p-5">Your account must be verified before you can send a referral. Upload your staff card above, then check your verification status.</Card>)}
     {tab === "roster" && <RosterView />}
     {tab === "consults" && <>
       {isLoading ? <div className="space-y-2">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-20" />)}</div> :
@@ -249,7 +250,7 @@ function Dashboard({ me, onLogout }: { me: any; onLogout: () => void }) {
 }
 
 /* ---------- root: restore session from localStorage, else auth ---------- */
-export function Portal() {
+export function Portal({ initialTeam }: { initialTeam?: string } = {}) {
   const [me, setMe] = useState<any | null>(null);
   const [restored, setRestored] = useState(false);
   useEffect(() => {
@@ -260,7 +261,8 @@ export function Portal() {
       session.token = tk; saveProfile(d.profile); setMe(d.profile);
     }).catch(() => { clearAuth(); session.token = ""; }).finally(() => setRestored(true));
   }, []);
+  const refresh = () => { apiRequest("GET", "/api/referrer/profile").then((r) => r.json()).then((d) => { saveProfile(d.profile); setMe(d.profile); }).catch(() => {}); };
   const logout = () => { apiRequest("POST", "/api/me/logout").catch(() => {}); clearAuth(); session.token = ""; setMe(null); };
   if (!restored) return <div className="py-16 flex justify-center"><Skeleton className="h-6 w-40" /></div>;
-  return me ? <Dashboard me={me} onLogout={logout} /> : <PortalAuth onIn={setMe} />;
+  return me ? <Dashboard me={me} onLogout={logout} onRefresh={refresh} initialTeam={initialTeam} /> : <PortalAuth onIn={setMe} />;
 }

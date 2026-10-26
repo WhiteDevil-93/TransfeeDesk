@@ -152,7 +152,7 @@ function Login({ onIn }: { onIn: (u: Me) => void }) {
     <Field label="Password"><Input type="password" autoComplete="current-password" value={password} onChange={(e) => setP(e.target.value)} required data-testid="input-password" /></Field>
     {err && <p className="text-sm text-destructive">{err}</p>}<Button className="w-full" disabled={busy} data-testid="button-login">{busy ? "Signing in..." : "Sign in"}</Button></form>
     <p className="text-xs text-muted-foreground">Sessions end after 30 minutes of inactivity. Forgot your password? Ask a BaraBridge admin to reset it.</p>
-    <div className="flex gap-4 flex-wrap text-sm"><Link href="/" className="underline">Home</Link><Link href="/refer" className="underline">Referral form</Link><Link href="/followup" className="underline">Follow up referral</Link><Link href="/privacy" className="underline">Privacy notice</Link></div></Card></div>;
+    <div className="flex gap-4 flex-wrap text-sm"><Link href="/" className="underline">Home</Link><Link href="/refer" className="underline">Referrer sign-in</Link><Link href="/followup" className="underline">Follow up referral</Link><Link href="/privacy" className="underline">Privacy notice</Link></div></Card></div>;
 }
 
 /* ---------- LANDING (public entry) ---------- */
@@ -167,7 +167,7 @@ function Landing() {
         <Link href="/portal"><Card className="p-6 hover-elevate space-y-3"><div className="flex items-center gap-2 text-primary"><Stethoscope className="h-6 w-6" /><span className="font-semibold text-foreground">I'm a referring clinician</span></div>
           <p className="text-sm text-muted-foreground">Doctors, nurses and other professionals: sign up once, your details are stored and auto-fill every referral. See your consults, clinical advice and the full on-call roster.</p></Card></Link>
       </div>
-      <div className="flex gap-4 flex-wrap text-sm mt-8 text-muted-foreground"><Link href="/refer" className="underline">Referral form</Link><Link href="/followup" className="underline">Follow up a referral</Link><Link href="/status" className="underline">Check referral status</Link><Link href="/privacy" className="underline">Privacy notice (POPIA)</Link></div>
+      <div className="flex gap-4 flex-wrap text-sm mt-8 text-muted-foreground"><Link href="/refer" className="underline">Referrer sign-up / sign-in</Link><Link href="/followup" className="underline">Follow up a referral</Link><Link href="/status" className="underline">Check referral status</Link><Link href="/privacy" className="underline">Privacy notice (POPIA)</Link></div>
     </div></main>
     <footer className="max-w-4xl mx-auto px-4 pb-6 text-xs text-muted-foreground">BaraBridge · inter-hospital referral and consult platform</footer></div>;
 }
@@ -473,6 +473,6 @@ export default function App() {
       : <Desk user={staffUser} onLogout={logout} />
     : <>{expired && <div className="fixed top-3 inset-x-0 z-50 flex justify-center"><div className="bg-amber-100 text-amber-900 text-sm rounded-md px-3 py-2 shadow">You were signed out after inactivity.</div></div>}<Login onIn={onStaffLogin} /></>;
   return <QueryClientProvider client={queryClient}><Toaster /><Router hook={useHashLocation}><Switch>
-    <Route path="/refer/:team" component={ReferPage}/><Route path="/refer" component={ReferPage} /><Route path="/followup"><Shell public><ReferrerPortal/></Shell></Route><Route path="/privacy" component={Privacy} /><Route path="/status/:ref" component={StatusPage} /><Route path="/status" component={StatusPage} /><Route path="/portal"><Shell public><Portal/></Shell></Route><Route path="/login">{staffScreen}</Route><Route path="/queue">{staffScreen}</Route><Route path="/">{staffUser || restoring || expired ? staffScreen : <Landing />}</Route><Route>{staffScreen}</Route>
+    <Route path="/refer/:team" component={({params}:any) => <Shell public><Portal initialTeam={params.team}/></Shell>}/><Route path="/refer"><Shell public><Portal/></Shell></Route><Route path="/followup"><Shell public><ReferrerPortal/></Shell></Route><Route path="/privacy" component={Privacy} /><Route path="/status/:ref" component={StatusPage} /><Route path="/status" component={StatusPage} /><Route path="/portal"><Shell public><Portal/></Shell></Route><Route path="/login">{staffScreen}</Route><Route path="/queue">{staffScreen}</Route><Route path="/">{staffUser || restoring || expired ? staffScreen : <Landing />}</Route><Route>{staffScreen}</Route>
   </Switch></Router></QueryClientProvider>;
 }

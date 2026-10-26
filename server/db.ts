@@ -56,7 +56,7 @@ export const db = {
       username: b.username.toLowerCase().trim(), name: b.name, role: "referrer", team: null,
       email: b.email.trim().toLowerCase(), phone: b.phone, specialty: b.specialty,
       profession: b.profession, hpcsa_number: b.hpcsa.replace(/\s+/g, ""),
-      pass_hash: hashPw(b.password), must_change: true,
+      pass_hash: hashPw(b.password), must_change: false,
     }).select().single()));
   },
   async updateReferrer(id: number, b: { name?: string; email?: string; phone?: string; hospital?: string; department?: string; specialty?: string; profession?: string; hpcsa?: string }) {

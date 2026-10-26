@@ -106,7 +106,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const t = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
       const u = t && await db.sessionUser(t);
       if (!u) return res.status(401).json({ message: "Session expired. Please sign in again." });
-      if (u.mustChange && !req.path.startsWith("/api/me") && !req.path.startsWith("/api/referrer/")) return res.status(403).json({ message: "Password change required" });
+      if (u.mustChange && u.role !== "referrer" && !req.path.startsWith("/api/me") && !req.path.startsWith("/api/referrer/")) return res.status(403).json({ message: "Password change required" });
       if (adminOnly && u.role !== "admin") return res.status(403).json({ message: "Admins only" });
       (req as AuthReq).user = u; (req as AuthReq).token = t; next();
     } catch (e) { res.status(500).json({ message: "Server error" }); }
@@ -159,18 +159,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   /* ----- public ----- */
   app.get("/api/specialties", (_q, res) => res.json(rosterSpecs().map(s => ({ id: s.id, name: s.name, group: s.group }))));
   app.get("/api/privacy", wrap(async (_q, res) => { const s = await db.settings(); res.json({ responsibleParty: s.responsibleParty, infoOfficer: s.infoOfficer, infoOfficerEmail: s.infoOfficerEmail, infoOfficerPhone: s.infoOfficerPhone, retentionDays: s.retentionDays }); }));
-  app.post("/api/referrals", wrap(async (req, res) => {
+  app.post("/api/referrals", A, wrap(async (req, res) => {
+    if (req.user.role !== "referrer") return res.status(403).json({ message: "A referring clinician account is required." });
+    if (req.user.verifyStatus !== "verified") return res.status(403).json({ message: "Your account must be verified before you can send a referral. Upload your staff card in the referrer portal or contact the BaraBridge admin." });
     if (limit("ref:" + ipOf(req), 20, 3600e3)) return res.status(429).json({ message: "Too many submissions. Please phone the unit." });
     const p = referralInput.safeParse(req.body);
     if (!p.success || !strOk(p.data)) return res.status(400).json({ message: "Please complete all required fields and confirm the information notice." });
     if(p.data.lat && Math.abs(Number(p.data.lat))>90 || p.data.lon && Math.abs(Number(p.data.lon))>180) return res.status(400).json({message:"Invalid coordinates"});
-    // Referrer PWA sessions tag the referral so the referrer can track it.
-    let referrerId: number | null = null;
-    const t = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-    const sess = t ? await db.sessionUser(t) : null;
-    if (sess && sess.role === "referrer") referrerId = sess.id;
     let r;
-    try { r = await db.create(p.data, referrerId); } catch(e:any) {
+    try { r = await db.create(p.data, req.user.id); } catch(e:any) {
       if(e.message.includes("image")||e.message.includes("JPEG")) return res.status(400).json({message:e.message});
       throw e;
     }
@@ -223,7 +220,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     await db.updateUser(u.id, { failed: 0, locked_until: null, last_login: new Date().toISOString() });
     const token = await db.createSession(u.id);
     await db.audit({ userId: u.id, userName: u.name, action: "login", ip });
-    res.json({ token, user: { id: u.id, name: u.name, username: u.username, role: u.role, team:u.team, phone:u.phone, mustChange: u.must_change } });
+    res.json({ token, user: await db.sessionUser(token) });
   }));
 
   app.get("/api/me", A, wrap(async (req, res) => {
@@ -276,7 +273,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       autoApproved,
       message: autoApproved
         ? "Verified against the HPCSA register — your account is active."
-        : "Account created. Please upload a photo of your staff card so we can verify you, or continue with your consults while pending.",
+        : "Account created. Please upload a photo of your staff card. You can send referrals after verification.",
     });
   }));
   app.post("/api/referrer/profile", REF, isReferrer, wrap(async (req, res) => {
