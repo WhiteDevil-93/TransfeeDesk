@@ -81,6 +81,11 @@ try {
     await visible(catchment.getByRole("button", { name: "QA Referral Centre", exact: true }));
     assert.equal(await catchment.locator("iframe").count(), 0);
     assert.equal(await catchment.getByText(/Pre-Notification/).count(), 0);
+    const areaPath = catchment.locator('.leaflet-overlay-pane path:not(.leaflet-interactive)');
+    await visible(areaPath);
+    const mapFrame = await catchment.getByRole("region", { name: "Facility drainage map", exact: true }).boundingBox();
+    const areaFrame = await areaPath.boundingBox();
+    assert(areaFrame && mapFrame && areaFrame.width > 0 && areaFrame.x >= mapFrame.x && areaFrame.y >= mapFrame.y && areaFrame.x + areaFrame.width <= mapFrame.x + mapFrame.width && areaFrame.y + areaFrame.height <= mapFrame.y + mapFrame.height, "The complete drainage polygon fits on screen after a fast lookup");
     await capture("18-facility-drainage-map");
     await catchment.getByRole("button", { name: "Close", exact: true }).click();
     await page.getByRole("button", { name: "Continue to clinical details", exact: true }).click();

@@ -31,8 +31,9 @@ export default function CatchmentView({ point, onSelect }: { point?: FacilityPoi
         const label = document.createElement("span"); label.textContent = centre.name;
         L.circleMarker(centre.location, { radius: 7, color: "#fff", weight: 2, fillColor: "#0f766e", fillOpacity: 1, bubblingMouseEvents: false }).bindPopup(label).addTo(group);
       }
-      m.fitBounds(L.latLngBounds([location, ...data.border, ...data.facilities.map(centre => centre.location)]), { padding: [20, 20], maxZoom: 14 });
-    } else m.setView(location, 13);
+      // Do not let a pending zoom to the facility discard this later drainage fit.
+      m.fitBounds(L.latLngBounds([location, ...data.border, ...data.facilities.map(centre => centre.location)]), { padding: [20, 20], maxZoom: 14, animate: false });
+    } else m.setView(location, 13, { animate: false });
   }, [point?.lat, point?.lon, data, valid]);
   return <div className="grid gap-4 lg:grid-cols-[2fr_1fr]" data-testid="catchment-view">
     <div className="relative isolate"><div ref={host} aria-label="Facility drainage map" role="region" className="h-[45vh] min-h-[280px] max-h-[480px] w-full rounded-xl border bg-muted"/>{tileError && <p role="status" className="absolute bottom-8 left-2 z-[1001] rounded bg-card p-2 text-xs shadow">Map tiles could not load. Check your connection.</p>}</div>
