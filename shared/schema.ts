@@ -9,7 +9,7 @@ export const referralInput = z.object({
   images: z.array(imageInput).max(3).default([]),
   doctorName: z.string().min(2), hospital: z.string().min(2), department: z.string().optional().default(""),
   phone: z.string().min(9), email: z.string().optional().default(""),
-  specialty: z.string().min(1), currentLocation: z.string().optional().default(""), bedNeeded: z.string().optional().default(""),
+  specialty: z.string().default(""), currentLocation: z.string().optional().default(""), bedNeeded: z.string().optional().default(""),
   lat: z.string().regex(/^$|^-?\d{1,3}(\.\d{1,8})?$/).optional().default(""), lon: z.string().regex(/^$|^-?\d{1,3}(\.\d{1,8})?$/).optional().default(""),
   patientInitials: z.string().min(1), age: z.string().min(1), sex: z.string().min(1), folderNo: z.string().optional().default(""),
   diagnosis: z.string().min(2), history: z.string().min(5).max(5000), exam: z.string().min(5).max(5000), investigations: z.string().min(2).max(5000),

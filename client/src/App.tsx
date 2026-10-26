@@ -305,7 +305,7 @@ function Detail({ r: lite, me, onClose, user }: { r: Referral|null; me: string; 
         <div className="flex flex-wrap gap-2"><a href={`tel:${r.phone}`}><Button size="sm" variant="outline"><Phone className="h-4 w-4 mr-1" />{r.phone}</Button></a>{r.email && <a href={`mailto:${r.email}`} className="text-sm underline self-center">{r.email}</a>}
         </div>
         <CatchmentBox r={r} onSave={(lat, lon, src) => m.mutate({ lat, lon, locSource: src })} /></Card>
-      <div className="grid grid-cols-3 gap-3 text-sm"><Sec t="Specialty" v={specName(specs, r.specialty)} /><Sec t="Patient in" v={r.currentLocation} /><Sec t="Bed needed" v={r.bedNeeded} />
+      <div className="grid grid-cols-3 gap-3 text-sm">{r.specialty && <Sec t="Specialty" v={specName(specs, r.specialty)} />}<Sec t="Patient in" v={r.currentLocation} />{r.bedNeeded && <Sec t="Bed needed" v={r.bedNeeded} />}
         <Sec t="Patient" v={`${r.patientInitials}, ${r.age} ${r.sex}`} /><Sec t="Folder" v={r.folderNo} /><Sec t="Suggested" v={r.suggestedPriority} /></div>
       <Sec t="History" v={r.history} /><Sec t="Examination" v={r.exam} /><Sec t="Investigations" v={r.investigations} /><Sec t="Request" v={r.reason} /></TabsContent>
       <TabsContent value="images" className="space-y-3"><h3 className="font-semibold">Clinical images</h3>{!full?.images?.length && <p className="text-sm text-muted-foreground">No initial referral images. Images attached to updates are in History.</p>}<Images images={full?.images} referralId={r.id}/></TabsContent>

@@ -72,18 +72,27 @@ try {
     await page.getByRole("button", { name: "Continue to clinical details", exact: true }).click();
     await visible(page.getByRole("alert").filter({ hasText: /Receiving unit/ }));
     await page.getByTestId("select-team").click(); await page.getByRole("option", { name: /MEU/ }).click();
+    assert.equal(await page.getByRole("combobox", { name: "Specialty", exact: true }).count(), 0);
+    assert.equal(await page.getByRole("combobox", { name: "Bed needed", exact: true }).count(), 0);
     const combos = page.getByRole("combobox");
     await combos.nth(1).click(); await page.getByRole("option", { name: "Advice only / no transfer", exact: true }).click();
-    await combos.nth(2).click(); await page.getByRole("option", { name: "Other / not listed", exact: true }).click();
     await capture("form-01-referral");
     await page.getByRole("button", { name: "Continue to clinical details", exact: true }).click();
-    for (const [label, value] of [["Initials *", "Q.T."], ["Age *", "30"], ["Working diagnosis *", "QA synthetic consult"], ["History *", "Synthetic history"], ["Examination (incl. vitals) *", "Synthetic examination"], ["Investigations *", "Synthetic investigations"], ["Reason for referral / request *", "Synthetic advice request"]]) await page.getByLabel(label, { exact: true }).fill(value);
+    for (const [label, value] of [["Initials *", "Q.T."], ["Age *", "30"], ["Working diagnosis *", "QA synthetic consult"], ["History *", "Synthetic history"], ["Examination findings *", "Synthetic examination"], ["Investigations *", "Synthetic investigations"], ["Reason for referral / request *", "Synthetic advice request"]]) await page.getByLabel(label, { exact: true }).fill(value);
+    const readings = [["Systolic BP (mmHg)", "120"], ["Diastolic BP (mmHg)", "80"], ["Heart rate (bpm)", "90"], ["Respiratory rate (/min)", "20"], ["SpO₂ (%)", "98"], ["Temperature (°C)", "37.2"], ["GCS total", "15"], ["Glucose (mmol/L)", "5.2"]];
+    for (const [label, value] of readings) await page.getByLabel(label, { exact: true }).fill(value);
     await page.getByRole("combobox", { name: "Sex", exact: true }).click(); await page.getByRole("option", { name: "Male", exact: true }).click();
     await page.getByRole("button", { name: /P3.*Routine/ }).click();
     await capture("form-02-clinical");
     await page.getByRole("button", { name: "Previous", exact: true }).click(); assert.equal(await page.getByLabel("Hospital / facility *", { exact: true }).inputValue(), "QA test facility");
     await page.getByRole("button", { name: "Continue to clinical details", exact: true }).click(); assert.equal(await page.getByLabel("History *", { exact: true }).inputValue(), "Synthetic history");
+    for (const [label, value] of readings) assert.equal(await page.getByLabel(label, { exact: true }).inputValue(), value);
+    await page.getByLabel("Systolic BP (mmHg)", { exact: true }).fill("not numeric");
     await page.getByRole("button", { name: "Review referral", exact: true }).click();
+    assert.equal(await page.getByLabel("Systolic BP (mmHg)", { exact: true }).evaluate(input => input.validity.valid), false);
+    await page.getByLabel("Systolic BP (mmHg)", { exact: true }).fill("120");
+    await page.getByRole("button", { name: "Review referral", exact: true }).click();
+    await visible(page.getByText(/Systolic BP: 120 mmHg/));
     assert.equal(await page.getByRole("button", { name: "Submit consult", exact: true }).isEnabled(), false);
     await capture("form-03-review");
     await page.getByRole("checkbox").check();
@@ -92,6 +101,9 @@ try {
     await page.getByRole("button", { name: "Back to dashboard" }).click();
     await page.getByText("QA synthetic consult", { exact: true }).click();
     await visible(page.getByRole("dialog", { name: "Referral details" }));
+    await page.getByText("Original referral & clinical details", { exact: true }).click();
+    await visible(page.getByText(/Systolic BP: 120 mmHg/));
+    await visible(page.getByText(/Glucose: 5.2 mmol\/L/));
     await page.getByLabel("Send an update or follow-up question").fill("QA synthetic clinical update");
     await Promise.all([page.waitForResponse(response => response.url().endsWith("/followup") && response.request().method() === "POST" && response.status() === 200), page.getByRole("button", { name: "Send update to the team" }).click()]);
     await visible(page.getByRole("region", { name: "Updates and response history" }).getByText("QA synthetic clinical update", { exact: true }));
@@ -127,6 +139,8 @@ try {
     const fixtureHeaders = { Authorization: `Bearer ${fixtureLogin.token}` };
     const ownCases = await page.request.get(`${base}/api/referrer/my-referrals`, { headers: fixtureHeaders }); assert(ownCases.ok());
     const [original] = await ownCases.json();
+    assert.equal(original.specialty, ""); assert.equal(original.bedNeeded, "");
+    assert.match(original.exam, /Systolic BP: 120 mmHg/); assert.match(original.exam, /Glucose: 5.2 mmol\/L/);
     for (const [priority, diagnosis] of [["P1", "QA emergency priority"], ["P2", "QA urgent priority"]]) {
       const response = await page.request.post(`${base}/api/referrals`, { headers: fixtureHeaders, data: { ...original, consent: true, suggestedPriority: priority, diagnosis } });
       assert(response.ok(), `Priority fixture creation failed: ${response.status()}`);
@@ -145,6 +159,8 @@ try {
     await page.getByRole("tab", { name: "History", exact: true }).click();
     await page.getByRole("tab", { name: "Images", exact: true }).click();
     await page.getByRole("tab", { name: "Clinical details", exact: true }).click();
+    await visible(page.getByText(/Systolic BP: 120 mmHg/));
+    await visible(page.getByText(/Glucose: 5.2 mmol\/L/));
     const closeControl = await page.getByRole("button", { name: "Close", exact: true }).boundingBox();
     assert(closeControl && closeControl.y >= 0 && closeControl.y + closeControl.height <= 844, "Case close control stays on screen while its content scrolls");
     await capture("14-receiving-case");
