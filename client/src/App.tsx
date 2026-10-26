@@ -435,17 +435,26 @@ function Desk({ user, onLogout }: { user: Me; onLogout: () => void }) {
   </Shell>;
 }
 
-function Private() {
-  const [user, setUser] = useState<Me|null>(null); const [expired, setExpired] = useState(false);
-  useEffect(() => { session.onExpire = () => { setUser(null); setExpired(true); queryClient.clear(); }; }, []);
-  const logout = async () => { try { await apiRequest("POST", "/api/me/logout"); } catch {} session.token = ""; queryClient.clear(); setUser(null); };
-  if (!user) return <>{expired && <div className="fixed top-3 inset-x-0 z-50 flex justify-center"><div className="bg-amber-100 text-amber-900 text-sm rounded-md px-3 py-2 shadow">You were signed out after inactivity.</div></div>}<Login onIn={(u) => { setExpired(false); setUser(u); }} /></>;
-  if (user.mustChange) return <ChangePassword me={user} onDone={() => setUser({ ...user, mustChange: false })} />;
-  return <Desk user={user} onLogout={logout} />;
-}
-
 export default function App() {
+  const [staffUser, setStaffUser] = useState<Me|null>(null); const [expired, setExpired] = useState(false);
+  useEffect(() => {
+    session.onExpire = () => { setStaffUser(null); setExpired(true); queryClient.clear(); };
+    return () => { session.onExpire = undefined; };
+  }, []);
+  const onStaffLogin = (user: Me) => {
+    setStaffUser(user); setExpired(false);
+    if (window.location.hash === "#/login") window.location.hash = "#/";
+  };
+  const logout = async () => {
+    try { await apiRequest("POST", "/api/me/logout"); } catch {}
+    session.token = ""; queryClient.clear(); setStaffUser(null); setExpired(false);
+  };
+  const staffScreen = staffUser
+    ? staffUser.mustChange
+      ? <ChangePassword me={staffUser} onDone={() => setStaffUser(u => u ? { ...u, mustChange: false } : null)} />
+      : <Desk user={staffUser} onLogout={logout} />
+    : <>{expired && <div className="fixed top-3 inset-x-0 z-50 flex justify-center"><div className="bg-amber-100 text-amber-900 text-sm rounded-md px-3 py-2 shadow">You were signed out after inactivity.</div></div>}<Login onIn={onStaffLogin} /></>;
   return <QueryClientProvider client={queryClient}><Toaster /><Router hook={useHashLocation}><Switch>
-    <Route path="/refer/:team" component={ReferPage}/><Route path="/refer" component={ReferPage} /><Route path="/followup"><Shell public><ReferrerPortal/></Shell></Route><Route path="/privacy" component={Privacy} /><Route path="/status/:ref" component={StatusPage} /><Route path="/status" component={StatusPage} /><Route path="/portal"><Shell public><Portal/></Shell></Route><Route path="/login"><Login onIn={() => { window.location.hash = "#/"; }} /></Route><Route path="/" component={Landing} /><Route component={Private} />
+    <Route path="/refer/:team" component={ReferPage}/><Route path="/refer" component={ReferPage} /><Route path="/followup"><Shell public><ReferrerPortal/></Shell></Route><Route path="/privacy" component={Privacy} /><Route path="/status/:ref" component={StatusPage} /><Route path="/status" component={StatusPage} /><Route path="/portal"><Shell public><Portal/></Shell></Route><Route path="/login">{staffScreen}</Route><Route path="/">{staffUser || expired ? staffScreen : <Landing />}</Route><Route>{staffScreen}</Route>
   </Switch></Router></QueryClientProvider>;
 }
