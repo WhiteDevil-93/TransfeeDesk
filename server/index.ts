@@ -5,7 +5,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
 import { runBulkExport } from "../script/hpcsa-scrape";
-import { sb } from "./db";
+import { databaseReady } from "./readiness";
 
 const app = express();
 const httpServer = createServer(app);
@@ -73,8 +73,7 @@ app.use((req, res, next) => {
 (async () => {
   app.get("/api/health", async (_req, res) => {
     try {
-      const { data, error } = await sb.rpc("is_app_server").abortSignal(AbortSignal.timeout(5000));
-      const ready = !error && data === true;
+      const ready = await databaseReady();
       res.status(ready ? 200 : 503).json({ status: ready ? "ready" : "unavailable" });
     } catch {
       res.status(503).json({ status: "unavailable" });

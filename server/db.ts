@@ -46,6 +46,8 @@ export function encryptImages(images:any[]) {
   });
 }
 
+export const REFERRAL_QUEUE_COLUMNS = "id,ref,team,consult_type,opened_at,opened_by,latest_followup_at,followup_seen_at,created_at,doctor_name,hospital,department,phone,specialty,current_location,bed_needed,patient_initials,age,sex,diagnosis,reason,suggested_priority,priority,status,decided_by,decided_at,bed_status,bed_ward,remind_at,ack_by,ack_at,purged_at,lat,lon,loc_source";
+
 export const db = {
   /* users */
   async userByName(username: string) { return chk(await sb.from("users").select("*").eq("username", username.toLowerCase().trim()).maybeSingle()) as any; },
@@ -137,8 +139,10 @@ export const db = {
 
   /* referrals */
   async list(team?:Team|null, referrerId?:number|null): Promise<Referral[]> {
-    const cols = "id,ref,team,consult_type,opened_at,opened_by,latest_followup_at,followup_seen_at,created_at,doctor_name,hospital,department,phone,specialty,current_location,bed_needed,patient_initials,age,sex,diagnosis,reason,suggested_priority,priority,status,decided_by,decided_at,bed_status,bed_ward,remind_at,ack_by,ack_at,purged_at,lat,lon,loc_source,referrer_id";
-    let q=sb.from("referrals").select(cols).order("created_at",{ascending:false}).limit(500);
+    // Staff queues do not use the referrer ownership field. Keep their existing
+    // projection compatible while the additive referrer migration is pending.
+    // Referrer queries still require that column and always fail closed.
+    let q=sb.from("referrals").select(referrerId !== undefined ? `${REFERRAL_QUEUE_COLUMNS},referrer_id` : REFERRAL_QUEUE_COLUMNS).order("created_at",{ascending:false}).limit(500);
     if(referrerId !== undefined) { q=q.eq("referrer_id",referrerId); }
     else if(team !== undefined) { if(!team) return []; q=q.eq("team",team); }
     return (chk(await q) as any[]).map(toCamel);
