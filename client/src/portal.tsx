@@ -109,26 +109,26 @@ function CardUpload({ me, onUploaded }: { me: any; onUploaded: () => void }) {
 }
 
 /* ---------- dashboard ---------- */
-function Dashboard({ me, onLogout, onRefresh, initialTeam }: { me: any; onLogout: () => void; onRefresh: () => void; initialTeam?: string }) {
-  const [tab, setTab] = useState<"consults" | "roster" | "new">(initialTeam ? "new" : "consults");
+function Dashboard({ me, onLogout, onRefresh, initialTeam, initialNew }: { me: any; onLogout: () => void; onRefresh: () => void; initialTeam?: string; initialNew?: boolean }) {
+  const [tab, setTab] = useState<"consults" | "roster" | "new">(initialTeam || initialNew ? "new" : "consults");
   useLayoutEffect(() => { window.scrollTo(0, 0); }, [tab]);
   const [search, setSearch] = useState("");
   const [openId, setOpenId] = useState<number | null>(null);
   const { data: list = [], isLoading, error, refetch } = useQuery<Referral[]>({ queryKey: ["/api/referrer/my-referrals"], refetchInterval: 20000 });
-  const verified = me.verifyStatus === "verified";
+  const isAdmin = me.role === "admin"; const verified = isAdmin || me.verifyStatus === "verified";
   const shown = list.filter(referral => !search || [referral.ref, referral.patientInitials, referral.diagnosis, referral.team].join(" ").toLowerCase().includes(search.toLowerCase()));
-  return <div className="bb-referrer-workspace max-w-4xl mx-auto space-y-5">
+  return <div className="bb-referrer-workspace max-w-4xl mx-auto space-y-5">{isAdmin && <Card className="p-4 space-y-3"><p className="font-semibold">Global administrator · referral workspace</p><p className="text-sm text-muted-foreground">View all consults and use the referral form with your administrator account. Submissions are attributed to you.</p><div className="flex flex-wrap gap-4"><Link href="/queue" className="underline">Back to referral desk</Link><Link href="/admin" className="underline">Back to Admin</Link></div></Card>}
     <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-card p-4"><div className="flex items-center gap-3"><span className="bb-role-icon h-10 w-10"><UserIcon className="h-5 w-5"/></span><div><p className="font-semibold">{me.name}</p><p className="text-xs text-muted-foreground">{[me.specialty, me.profession].filter(Boolean).join(" · ")}</p></div></div>
-      <Badge className={verified ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100" : "bg-amber-100 text-amber-900 dark:bg-amber-900 dark:text-amber-100"}>{verified ? "Verified" : "Verification pending"}</Badge>
+      <Badge className={verified ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100" : "bg-amber-100 text-amber-900 dark:bg-amber-900 dark:text-amber-100"}>{isAdmin ? "Global administrator" : verified ? "Verified" : "Verification pending"}</Badge>
       <Button size="sm" variant="ghost" className="ml-auto" onClick={onLogout}><LogOut className="h-4 w-4 mr-1" />Sign out</Button></div>
     {!verified && <><CardUpload me={me} onUploaded={onRefresh} /><Button size="sm" variant="outline" onClick={onRefresh}>Check verification status</Button></>}
-    <nav aria-label="Referrer workspace" className="bb-referrer-nav">{([["consults", "My consults", ClipboardList], ["new", "New consult", Send], ["roster", "On-call roster", CalendarDays]] as const).map(([t, l, I]) =>
+    <nav aria-label="Referrer workspace" className="bb-referrer-nav">{([["consults", isAdmin ? "All consults" : "My consults", ClipboardList], ["new", "New consult", Send], ["roster", "On-call roster", CalendarDays]] as const).map(([t, l, I]) =>
       <button key={t} aria-current={tab === t ? "page" : undefined} onClick={() => setTab(t as any)}><I/>{l}</button>)}</nav>
-    {tab === "new" && <Button variant="ghost" onClick={() => setTab("consults")}>Back to my consults</Button>}
+    {tab === "new" && <Button variant="ghost" onClick={() => setTab("consults")}>{isAdmin ? "Back to all consults" : "Back to my consults"}</Button>}
     {tab === "new" && (verified ? <Suspense fallback={<p role="status">Loading referral form...</p>}><ConsultForm me={me} initialTeam={initialTeam} onDone={() => setTab("consults")} /></Suspense> : <Card className="p-5">Your account must be verified before you can send a referral. Upload your staff card above, then check your verification status.</Card>)}
     {tab === "roster" && <RosterView />}
     {tab === "consults" && <>
-      <div className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-2xl font-bold tracking-tight">My consults</h1><p className="mt-1 text-sm text-muted-foreground">Track referrals, clinical advice and transfer decisions.</p></div>{verified && <Button onClick={() => setTab("new")}><Plus/>New referral</Button>}</div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-2xl font-bold tracking-tight">{isAdmin ? "All consults" : "My consults"}</h1><p className="mt-1 text-sm text-muted-foreground">Track referrals, clinical advice and transfer decisions.</p></div>{verified && <Button onClick={() => setTab("new")}><Plus/>New referral</Button>}</div>
       {list.length > 0 && <div className="relative"><Search className="absolute left-3 top-4 h-4 w-4 text-muted-foreground"/><Input aria-label="Search your consults" placeholder="Search initials, reference or diagnosis" className="pl-10" value={search} onChange={event => setSearch(event.target.value)}/></div>}
       {isLoading ? <p role="status">Loading your consults...</p> : error ? <Card className="p-5 space-y-3"><p role="alert">Couldn't load your consults. Check your connection and try again.</p><Button onClick={() => refetch()}>Try again</Button></Card> :
         list.length === 0 ? <Card className="p-6 space-y-3"><p>{verified ? "No consults yet. Create your first referral to request advice or a transfer." : "No consults yet. Your account must be verified before you can send one."}</p>{verified && <Button onClick={() => setTab("new")}>Start a new consult</Button>}</Card> :
@@ -143,10 +143,10 @@ function Dashboard({ me, onLogout, onRefresh, initialTeam }: { me: any; onLogout
 }
 
 /* ---------- root: one shared session for staff and referrers ---------- */
-export function Portal({ initialTeam }: { initialTeam?: string } = {}) {
+export function Portal({ initialTeam, initialNew }: { initialTeam?: string; initialNew?: boolean } = {}) {
   const { user, signOut, refreshUser } = useAuth();
   const { toast } = useToast();
   const refresh = () => { refreshUser().then(() => toast({ title: "Verification status refreshed" })).catch(e => toast({ title: messageOf(e), variant: "destructive" })); };
-  if (user && user.role !== "referrer") return <Card className="max-w-md mx-auto p-5 space-y-4"><h1 className="text-xl font-semibold">You're signed in as receiving staff</h1><p>The referral desk is where you review and manage incoming consults.</p><Link href="/queue" className="block underline font-medium">Continue to referral desk</Link><Button variant="outline" onClick={() => signOut("/portal")}>Switch to a referrer account</Button></Card>;
-  return user ? <Dashboard me={user} onLogout={() => signOut()} onRefresh={refresh} initialTeam={initialTeam} /> : <ReferrerAuth/>;
+  if (user && user.role !== "referrer" && !(user.role === "admin" && !user.mustChange)) return <Card className="max-w-md mx-auto p-5 space-y-4"><h1 className="text-xl font-semibold">You're signed in as receiving staff</h1><p>The referral desk is where you review and manage incoming consults.</p><Link href="/queue" className="block underline font-medium">Continue to referral desk</Link><Button variant="outline" onClick={() => signOut("/portal")}>Switch to a referrer account</Button></Card>;
+  return user ? <Dashboard key={`${initialTeam || "all"}:${initialNew ? "new" : "consults"}`} me={user} onLogout={() => signOut()} onRefresh={refresh} initialTeam={initialTeam} initialNew={initialNew} /> : <ReferrerAuth/>;
 }

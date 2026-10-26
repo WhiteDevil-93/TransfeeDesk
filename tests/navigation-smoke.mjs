@@ -48,6 +48,8 @@ try {
   check("Public entry, follow-up, status, privacy and unknown pages have recovery navigation");
   if (!process.argv.includes("--public-only")) {
     await login("/portal", "staff"); await visible(page.getByRole("heading", { name: "MEU referral desk" }));
+    assert.equal(await page.getByTestId("link-Admin").count(), 0);
+    assert.equal(await page.getByTestId("link-Unit admin").count(), 0);
     assert(page.url().endsWith("#/queue")); await capture("05-staff-from-referrer-login");
     await page.reload(); await visible(page.getByRole("heading", { name: "MEU referral desk" }));
     await page.getByTestId("link-On call").click(); await visible(page.getByRole("heading", { name: "On call", exact: true }));
@@ -150,6 +152,16 @@ try {
     await Promise.all([page.waitForResponse(response => response.request().method() === "PATCH" && response.url().includes("/api/referrals/") && response.status() === 200), page.getByTestId("button-send-advice").click()]);
     await page.getByRole("button", { name: "Close", exact: true }).click();
     await page.getByTestId("link-Admin").click(); await visible(page.getByRole("heading", { name: "Admin", exact: true }));
+    await page.getByTestId("admin-referral-form").click();
+    await visible(page.getByRole("heading", { name: "New referral", exact: true }));
+    await visible(page.getByTestId("select-team"));
+    assert.equal(await page.getByText("Verification pending", { exact: true }).count(), 0);
+    await capture("16-global-admin-referral-form");
+    await page.getByRole("link", { name: "Back to Admin", exact: true }).click();
+    await page.getByRole("link", { name: "Open referral workspace", exact: true }).click();
+    await visible(page.getByRole("heading", { name: "All consults", exact: true }));
+    await page.getByRole("link", { name: "Back to referral desk", exact: true }).click();
+    check("Global admin opens the real referral form and all-consults workspace without switching accounts");
     await page.getByTestId("link-Queue").click(); await visible(page.getByRole("heading", { name: "All-unit referral desk" }));
     await page.setViewportSize({ width: 1280, height: 900 }); await capture("10-desktop-staff-navigation");
     await page.getByRole("button", { name: "Log out", exact: true }).click();
@@ -165,6 +177,19 @@ try {
     await visible(page.getByRole("region", { name: "Updates and response history" }).getByText("QA synthetic receiving-team advice", { exact: true })); await capture("11-receiving-team-response");
     await page.getByRole("button", { name: "Close", exact: true }).last().click();
     check("Receiving-team advice reaches the original referrer's case and response history");
+    await page.getByRole("button", { name: "Sign out", exact: true }).click();
+    await login("/login", "unit_meu"); await visible(page.getByRole("heading", { name: "MEU referral desk", exact: true }));
+    assert.equal(await page.getByTestId("link-Admin").count(), 0);
+    await page.getByTestId("link-Unit admin").click(); await visible(page.getByRole("heading", { name: "Admin", exact: true }));
+    await visible(page.getByText("QA Receiving Staff", { exact: true }));
+    for (const name of ["QA Administrator", "QA TEU Unit Admin", "QA MEU Unit Admin", "QA First Login"]) assert.equal(await page.getByRole("main").getByText(name, { exact: true }).count(), 0);
+    for (const name of ["Referrers", "Audit log", "Privacy and data"]) assert.equal(await page.getByRole("tab", { name, exact: true }).count(), 0);
+    assert.equal(await page.getByTestId("admin-referral-form").count(), 0);
+    assert.equal(await page.getByRole("combobox").first().isDisabled(), true, "Unit manager cannot change provisioning role");
+    await capture("17-unit-admin-scoped-management");
+    check("Regular staff have no Admin tab; unit admin sees only own-unit clinician controls and no global settings or role-grant controls");
+    await page.getByRole("button", { name: "Log out", exact: true }).click();
+    await login("/portal", "referrer"); await visible(page.getByText("Verified", { exact: true }));
     await page.route("**/api/me", route => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ message: "Fixture offline" }) }));
     await page.reload(); await visible(page.getByRole("heading", { name: "Couldn't restore your session" }));
     await visible(page.getByRole("link", { name: "Home", exact: true }).first()); await page.unroute("**/api/me"); await page.getByRole("button", { name: "Try again", exact: true }).click(); await visible(page.getByText("Verified", { exact: true }));

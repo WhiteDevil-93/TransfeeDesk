@@ -106,7 +106,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const t = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
       const u = t && await db.sessionUser(t);
       if (!u) return res.status(401).json({ message: "Session expired. Please sign in again." });
-      if (u.mustChange && u.role !== "referrer" && !req.path.startsWith("/api/me") && !req.path.startsWith("/api/referrer/")) return res.status(403).json({ message: "Password change required" });
+      if (u.mustChange && u.role !== "referrer" && !req.path.startsWith("/api/me")) return res.status(403).json({ message: "Password change required" });
       if (adminOnly && u.role !== "admin") return res.status(403).json({ message: "Admins only" });
       (req as AuthReq).user = u; (req as AuthReq).token = t; next();
     } catch (e) { res.status(500).json({ message: "Server error" }); }
@@ -129,13 +129,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             await Promise.all(keys.map(key => caches.delete(key)));
           }
         } catch { /* still try a fresh page when browser cache APIs fail */ } finally {
-          window.location.replace('/index.html?updated=' + Date.now() + '#/admin');
+          window.location.replace('/index.html?updated=' + Date.now() + '#/');
         }
       })();
-    </script><p>If this page does not continue, <a href="/index.html#/admin">open BaraBridge Admin</a>.</p></html>`);
+    </script><p>If this page does not continue, <a href="/index.html#/">open BaraBridge</a>.</p></html>`);
   });
   const isReferrer = (req: AuthReq, res: Response, next: NextFunction) => {
     if (req.user?.role !== "referrer") return res.status(403).json({ message: "Referrer account required" });
+    next();
+  };
+  const referrerWorkspace = (req: AuthReq, res: Response, next: NextFunction) => {
+    if (req.user?.role !== "referrer" && req.user?.role !== "admin") return res.status(403).json({ message: "Referrer or global administrator account required" });
     next();
   };
   const MANAGER = [A, (req:AuthReq,res:Response,next:NextFunction) => {
@@ -160,8 +164,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/specialties", (_q, res) => res.json(rosterSpecs().map(s => ({ id: s.id, name: s.name, group: s.group }))));
   app.get("/api/privacy", wrap(async (_q, res) => { const s = await db.settings(); res.json({ responsibleParty: s.responsibleParty, infoOfficer: s.infoOfficer, infoOfficerEmail: s.infoOfficerEmail, infoOfficerPhone: s.infoOfficerPhone, retentionDays: s.retentionDays }); }));
   app.post("/api/referrals", A, wrap(async (req, res) => {
-    if (req.user.role !== "referrer") return res.status(403).json({ message: "A referring clinician account is required." });
-    if (req.user.verifyStatus !== "verified") return res.status(403).json({ message: "Your account must be verified before you can send a referral. Upload your staff card in the referrer portal or contact the BaraBridge admin." });
+    if (req.user.role !== "referrer" && req.user.role !== "admin") return res.status(403).json({ message: "A referring clinician or global administrator account is required." });
+    if (req.user.role === "referrer" && req.user.verifyStatus !== "verified") return res.status(403).json({ message: "Your account must be verified before you can send a referral. Upload your staff card in the referrer portal or contact the BaraBridge admin." });
     if (limit("ref:" + ipOf(req), 20, 3600e3)) return res.status(429).json({ message: "Too many submissions. Please phone the unit." });
     const p = referralInput.safeParse(req.body);
     if (!p.success || !strOk(p.data)) return res.status(400).json({ message: "Please complete all required fields and confirm the information notice." });
@@ -171,7 +175,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if(e.message.includes("image")||e.message.includes("JPEG")) return res.status(400).json({message:e.message});
       throw e;
     }
-    await db.audit({ action: "referral_submitted", referralId: r.id, detail: `${r.ref} from ${p.data.hospital}`, ip: ipOf(req) });
+    await audit(req, "referral_submitted", r.id, `${r.ref} from ${p.data.hospital} (${req.user.role})`);
     res.json({ ref: r.ref, followupCode:(r as any).followupCode });
     if (!p.data.lat) geocode(p.data.hospital).then(h => { const f = h.find(x => x.health); if (f) return db.update(r.id, { lat: f.lat, lon: f.lon, locSource: "Auto: " + f.name.slice(0, 150) }); }).catch(() => {});
     else db.update(r.id, { locSource: "Shared by referring doctor" }).catch(() => {});
@@ -299,26 +303,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/referrer/profile", REF, isReferrer, wrap(async (req, res) => {
     res.json({ profile: req.user });
   }));
-  app.get("/api/referrer/my-referrals", REF, isReferrer, wrap(async (req, res) => {
-    res.json(await db.list(undefined, req.user.id));
+  app.get("/api/referrer/my-referrals", REF, referrerWorkspace, wrap(async (req, res) => {
+    res.json(await db.list(undefined, req.user.role === "admin" ? undefined : req.user.id));
   }));
   const ownReferral = async (req: AuthReq, res: Response) => {
     const r = await db.get(Number(req.params.id));
-    if (!r || r.referrerId !== req.user.id) { res.status(404).json({ message: "Referral not found" }); return null; }
+    if (!r || (req.user.role !== "admin" && r.referrerId !== req.user.id)) { res.status(404).json({ message: "Referral not found" }); return null; }
     return r;
   };
-  app.get("/api/referrer/referrals/:id", REF, isReferrer, wrap(async (req, res) => {
+  app.get("/api/referrer/referrals/:id", REF, referrerWorkspace, wrap(async (req, res) => {
     const r = await ownReferral(req, res); if (!r) return;
     await audit(req, "referrer_view_referral", r.id);
     res.json({ ...r, timeline: await db.timeline(r.id), images: (await db.images(r.id)).filter(im => !im.followupId) });
   }));
-  app.get("/api/referrer/referrals/:id/images/:imageId", REF, isReferrer, wrap(async (req, res) => {
+  app.get("/api/referrer/referrals/:id/images/:imageId", REF, referrerWorkspace, wrap(async (req, res) => {
     const r = await ownReferral(req, res); if (!r) return;
     const image = await db.image(Number(req.params.imageId), r.id);
     if (!image) return res.status(404).end();
     await audit(req, "referrer_view_image", r.id); res.json(image);
   }));
-  app.post("/api/referrer/referrals/:id/followup", REF, isReferrer, wrap(async (req, res) => {
+  app.post("/api/referrer/referrals/:id/followup", REF, referrerWorkspace, wrap(async (req, res) => {
     const r = await ownReferral(req, res); if (!r) return;
     if (r.purgedAt) return res.status(410).json({ message: "Clinical record has expired" });
     if (limit("referrer-followup:" + req.user.id, 20, 3600e3)) return res.status(429).json({ message: "Too many updates" });
@@ -328,7 +332,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     catch (e: any) { if (e.message.includes("image") || e.message.includes("JPEG")) return res.status(400).json({ message: e.message }); throw e; }
     await audit(req, "referral_followup", r.id, "Referrer submitted clinical update"); res.json({ ok: true });
   }));
-  app.get("/api/referrer/roster", REF, isReferrer, (req: AuthReq, res) => {
+  app.get("/api/referrer/roster", REF, referrerWorkspace, (req: AuthReq, res) => {
     const date = String(req.query.date || saToday());
     res.json({ hospital: loadRoster()?.hospital, generated: loadRoster()?.generated, date, specs: rosterFor(date, req.query.spec ? String(req.query.spec) : undefined) });
   });
@@ -439,7 +443,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     for (const k of ["responsibleParty", "infoOfficer", "infoOfficerEmail", "infoOfficerPhone"]) if (b[k] !== undefined) v[k] = String(b[k]).slice(0, 200);
     const n = await db.saveSettings(v); await audit(req, "settings_changed", null, Object.keys(v).join(", ")); res.json(n);
   }));
-  app.get("/api/users", ...MANAGER, wrap(async (req, res) => res.json((await db.users()).filter(u=>req.user.role==="admin" || u.team===req.user.team))));
+  app.get("/api/users", ...MANAGER, wrap(async (req, res) => res.json((await db.users()).filter(u=>canManage(req.user,u)))));
   app.post("/api/users", ...MANAGER, wrap(async (req, res) => {
     const { username, name, role = "clinician", password, team, phone="" } = req.body || {};
     if (!username || !name || String(password || "").length < 10) return res.status(400).json({ message: "Username, name and a temporary password of 10+ characters are required" });
@@ -454,7 +458,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const target=await db.userById(id); if(!target || !canManage(req.user,target)) return res.status(403).json({message:"You cannot manage this account"});
     if(target.role==="admin") return res.status(403).json({message:"Global admin account is protected"});
     if (b.active !== undefined) u.active = !!b.active;
-    if (b.role || b.team) {
+    if (b.role !== undefined || b.team !== undefined) {
       if(req.user.role!=="admin") return res.status(403).json({message:"Only the global admin can change units or admin roles"});
       if(b.role && !["unit_admin","clinician"].includes(b.role)) return res.status(400).json({message:"Invalid role"});
       if(b.team && !TEAMS.includes(b.team)) return res.status(400).json({message:"Invalid unit"});

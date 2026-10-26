@@ -11,6 +11,7 @@ test("each unit is isolated",()=>{
     for(const dest of ["MEU","TEU","SEU",null]) assert.equal(canAccess(user,dest),dest===team);
   }
   assert.equal(canAccess({id:2,role:"clinician",team:null},null),false);
+  assert.equal(canAccess({id:2,role:"referrer",team:"MEU"},"MEU"),false);
 });
 test("consultants manage only clinicians in their own unit",()=>{
   const admin:Principal={id:2,role:"unit_admin",team:"MEU"};

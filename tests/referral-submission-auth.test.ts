@@ -15,7 +15,7 @@ test("verified submission and referrer follow-up stay confined to the owner's ca
   const originalUpdate = db.update;
   let createdFor: number | null = null;
   (db as any).sessionUser = async (token: string) => {
-    if (token === "staff") return { id: 1, role: "admin", mustChange: false };
+    if (token === "staff") return { id: 1, role: "clinician", team: "MEU", mustChange: false };
     if (token === "pending") return { id: 2, role: "referrer", verifyStatus: "card_pending", mustChange: true };
     if (token === "verified") return { id: 3, role: "referrer", verifyStatus: "verified", mustChange: true };
     return null;

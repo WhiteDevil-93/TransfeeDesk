@@ -14,6 +14,8 @@ import { useToast } from "@/hooks/use-toast";
 import { Check, X } from "lucide-react";
 import type { User, AuditRow, AppSettings } from "@shared/schema";
 import { TeamSelect } from "./workflows";
+import { Link } from "wouter";
+import { canManage } from "@shared/teams";
 
 const errMsg = (e: any) => { const m = String(e?.message || ""); try { return JSON.parse(m.replace(/^\d+:\s*/, "")).message; } catch { return m.replace(/^\d+:\s*/, "") || "Something went wrong"; } };
 const tempPw = () => { const a = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"; const b = new Uint32Array(12); crypto.getRandomValues(b); return Array.from(b, x => a[x % a.length]).join(""); };
@@ -38,10 +40,10 @@ function Users({ me }: { me: User }) {
         <Button disabled={add.isPending} data-testid="button-add-user">Add</Button></form>
       {shown && <div className="rounded-md bg-amber-50 dark:bg-amber-950 p-3 text-sm flex flex-wrap gap-2 items-center"><span>Give this to the person privately (in person or by phone, not in a group chat). They must change it on first sign-in:</span><span className="font-mono font-semibold" data-testid="text-temp-pw">{shown}</span><Button size="sm" variant="ghost" onClick={() => setShown(null)}>Done</Button></div>}
     </Card>
-    {isLoading ? <Skeleton className="h-40" /> : <Card className="divide-y">{data.map(u => <div key={u.id} className="p-3 flex flex-wrap gap-3 items-center">
+    {isLoading ? <Skeleton className="h-40" /> : <Card className="divide-y">{data.filter(u => me.role === "admin" || canManage(me, u)).map(u => <div key={u.id} className="p-3 flex flex-wrap gap-3 items-center">
       <div className="flex-1 min-w-[180px]"><p className="font-medium">{u.name} {!u.active && <Badge variant="outline" className="ml-1">Deactivated</Badge>}{u.mustChange && u.active && <Badge variant="outline" className="ml-1">Temp password</Badge>}</p><p className="text-xs text-muted-foreground">{u.username} · {u.role==="admin"?"Global admin":u.role==="unit_admin"?"Unit admin":"Team member"} · {u.team||"No unit"} · last sign-in {u.lastLogin ? new Date(u.lastLogin).toLocaleString() : "never"}</p></div>
       {me.role==="admin"&&u.role!=="admin"&&<><div className="w-52"><TeamSelect value={u.team||""} onChange={team=>upd.mutate({id:u.id,team})}/></div><Select value={u.role} onValueChange={(v) => upd.mutate({ id: u.id, role: v })}><SelectTrigger className="w-36 h-8"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="clinician">Team member</SelectItem><SelectItem value="unit_admin">Unit admin</SelectItem></SelectContent></Select></>}
-      {u.role!=="admin"&&(me.role==="admin"||u.role==="clinician")&&<><Button size="sm" variant="outline" onClick={() => reset(u)}>Reset password</Button>
+      {u.role!=="admin"&&canManage(me,u)&&<><Button size="sm" variant="outline" onClick={() => reset(u)}>Reset password</Button>
       {u.id !== me.id && <Button size="sm" variant={u.active ? "outline" : "default"} onClick={() => upd.mutate({ id: u.id, active: !u.active })}>{u.active ? "Deactivate" : "Reactivate"}</Button>}</>}
     </div>)}</Card>}
     <p className="text-xs text-muted-foreground">Deactivate people as soon as they leave the rotation. Deactivating or resetting a password signs them out everywhere.</p>
@@ -120,7 +122,9 @@ function Referrers() {
 }
 
 export function Admin({ me }: { me: User }) {
+  if (me.role !== "admin" && !(me.role === "unit_admin" && me.team)) return <Card className="p-5">Administrator access required.</Card>;
   return <div className="space-y-5"><div className="space-y-2"><p className="text-xs font-semibold uppercase tracking-widest text-primary">Workspace management</p><h1 className="text-2xl font-bold tracking-tight">Admin</h1></div>
+    {me.role === "admin" && <Card className="p-4 flex flex-wrap gap-4"><Link href="/refer" className="font-semibold text-primary underline" data-testid="admin-referral-form">Open referral form</Link><Link href="/portal" className="text-primary underline">Open referral workspace</Link></Card>}
     <p className="text-sm text-muted-foreground">{me.role==="admin"?"Global administrator: access to every unit.":"Unit administrator: manage team members in "+me.team+". Daily roster changes are under On call."}</p>
     <Tabs defaultValue="users"><TabsList><TabsTrigger value="users">Users</TabsTrigger>{me.role==="admin"&&<><TabsTrigger value="referrers">Referrers</TabsTrigger><TabsTrigger value="audit">Audit log</TabsTrigger><TabsTrigger value="data">Privacy and data</TabsTrigger></>}</TabsList>
       <TabsContent value="users" className="mt-4"><Users me={me} /></TabsContent>{me.role==="admin"&&<><TabsContent value="referrers" className="mt-4"><Referrers /></TabsContent><TabsContent value="audit" className="mt-4"><Audit /></TabsContent><TabsContent value="data" className="mt-4"><Data /></TabsContent></>}</Tabs></div>;

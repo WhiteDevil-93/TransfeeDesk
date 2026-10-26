@@ -69,8 +69,8 @@ function StatusPage({ params }: any) {
 function Shell({ children, public: pub, me, onLogout, alertCount, onSettings, admin }: any) {
   const [loc] = useLocation();
   const { user } = useAuth();
-  const nav = [["/queue", "Queue", Inbox], ["/oncall", "On call", CalendarDays], ["/catchments", "Catchments", MapPin], ["/doctors", "Doctors", Stethoscope], ...(admin ? [["/admin", "Admin", ShieldCheck]] : [])] as const;
-  return <div className={`min-h-screen bg-background ${pub ? user?.role === "referrer" && (loc === "/portal" || loc.startsWith("/refer")) ? "bb-referrer-shell" : "" : "bb-staff-shell"}`}><header className={`border-b sticky top-0 z-30 ${pub ? "bb-public-header" : "bb-staff-header"}`}><div className="max-w-6xl mx-auto px-4 py-3 min-h-14 flex flex-wrap items-center gap-2">
+  const nav = [["/queue", "Queue", Inbox], ["/oncall", "On call", CalendarDays], ["/catchments", "Catchments", MapPin], ["/doctors", "Doctors", Stethoscope], ...(admin ? [["/admin", user?.role === "admin" ? "Admin" : "Unit admin", ShieldCheck]] : []), ...(user?.role === "admin" ? [["/refer", "Refer", Send]] : [])] as const;
+  return <div className={`min-h-screen bg-background ${pub ? (user?.role === "referrer" || user?.role === "admin") && (loc === "/portal" || loc.startsWith("/refer")) ? "bb-referrer-shell" : "" : "bb-staff-shell"}`}><header className={`border-b sticky top-0 z-30 ${pub ? "bb-public-header" : "bb-staff-header"}`}><div className="max-w-6xl mx-auto px-4 py-3 min-h-14 flex flex-wrap items-center gap-2">
     <Link href="/" className="flex items-center gap-2 font-semibold" aria-label="BaraBridge home"><span className="text-primary"><Logo /></span><span>BaraBridge</span></Link>
     {!pub && <span className="rounded-md bg-white/10 px-2.5 py-1 text-xs font-semibold">{user?.role === "admin" ? "Admin" : user?.team || "No unit"}</span>}
     {pub && <nav aria-label="Account navigation" className="bb-public-nav ml-auto flex flex-wrap gap-x-4 text-sm"><Link href="/">Home</Link><Link href={user && user.role !== "referrer" ? "/queue" : "/login"}>{user && user.role !== "referrer" ? "Referral desk" : "Staff sign-in"}</Link><Link href="/portal">{user?.role === "referrer" ? "My consults" : "Referrer portal"}</Link></nav>}
@@ -360,7 +360,7 @@ function Doctors() {
 }
 
 function Desk({ user, onLogout }: { user: Me; onLogout: () => void }) {
-  const me = user.name; const admin = user.role === "admin"; const manager=admin||user.role==="unit_admin";
+  const me = user.name; const admin = user.role === "admin"; const manager=admin||(user.role==="unit_admin" && !!user.team);
   const [st, setSt] = useState<AlertSettings>(defaultSettings); const [settings, setSettings] = useState(false); const [openId, setOpenId] = useState<number|null>(null);
   useEffect(() => { apiRequest("GET", "/api/settings").then(r => r.json()).then(v => v && setSt({ ...defaultSettings, ...v })).catch(() => {}); }, []);
   const { p1, due, data, isLoading, error, refetch } = useAlerts(me, st);
@@ -396,7 +396,7 @@ function AppRoutes() {
   useLayoutEffect(() => { window.scrollTo(0, 0); }, [location, user?.id]);
   return <Switch>
     <Route path="/refer/:team" component={({params}:any) => <SessionGate><Shell public><Portal initialTeam={params.team}/></Shell></SessionGate>}/>
-    <Route path="/refer"><SessionGate><Shell public><Portal/></Shell></SessionGate></Route>
+    <Route path="/refer"><SessionGate><Shell public><Portal initialNew/></Shell></SessionGate></Route>
     <Route path="/portal"><SessionGate><Shell public><Portal/></Shell></SessionGate></Route>
     <Route path="/followup"><Shell public><ReferrerPortal/></Shell></Route>
     <Route path="/privacy" component={Privacy}/><Route path="/status/:ref" component={StatusPage}/><Route path="/status" component={StatusPage}/>
