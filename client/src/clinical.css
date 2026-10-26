@@ -1,0 +1,52 @@
+/* BaraBridge clinical workspace, based on the approved UX Pilot screens. */
+.bb-public-header { background: hsl(var(--card)); }
+.bb-public-nav a { display: inline-flex; align-items: center; min-height: 44px; text-decoration: none; font-weight: 500; }
+.bb-public-nav a:hover { color: hsl(var(--primary)); }
+.bb-public-footer { border-top: 1px solid hsl(var(--border)); padding-top: 20px; margin-top: 32px; }
+.bb-public-footer a { display: inline-flex; align-items: center; min-height: 44px; }
+.bb-role-card { display: flex; gap: 16px; align-items: flex-start; padding: 24px; border: 1px solid hsl(var(--border)); background: hsl(var(--card)); border-radius: 18px; box-shadow: 0 1px 3px hsl(var(--foreground) / .04); transition: border-color .15s, box-shadow .15s; }
+.bb-role-card:hover { border-color: hsl(var(--primary)); box-shadow: 0 4px 14px hsl(var(--primary) / .07); }
+.bb-role-card:focus-visible { outline: 3px solid hsl(var(--ring)); outline-offset: 3px; }
+.bb-role-icon { display: grid; place-items: center; width: 48px; height: 48px; flex-shrink: 0; border-radius: 14px; background: hsl(var(--accent)); color: hsl(var(--primary)); }
+.bb-audience-switch { display: flex; gap: 4px; padding: 5px; border-radius: 12px; background: hsl(var(--secondary)); }
+.bb-audience-switch a { display: flex; justify-content: center; align-items: center; flex: 1; min-height: 44px; padding: 6px; border-radius: 8px; font-size: 14px; font-weight: 600; text-align: center; color: hsl(var(--muted-foreground)); }
+.bb-audience-switch a[aria-current] { background: hsl(var(--card)); color: hsl(var(--foreground)); box-shadow: 0 1px 3px hsl(var(--foreground) / .07); }
+.bb-section-heading { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: hsl(var(--foreground)); }
+.bb-section-heading::before { content: ''; width: 3px; height: 18px; border-radius: 3px; background: hsl(var(--primary)); flex-shrink: 0; }
+.bb-stepper { display: flex; gap: 8px; padding: 20px 8px; background: hsl(var(--card)); border: 1px solid hsl(var(--border)); border-radius: 12px; }
+.bb-stepper li { position: relative; flex: 1; }
+.bb-stepper li:not(:last-child)::after { content: ''; position: absolute; top: 16px; left: calc(50% + 25px); width: calc(100% - 42px); height: 2px; background: hsl(var(--border)); }
+.bb-stepper li:has(+ li[aria-current])::after { background: hsl(var(--primary)); }
+.bb-step-actions { position: sticky; bottom: calc(79px + env(safe-area-inset-bottom)); z-index: 10; display: flex; gap: 12px; background: hsl(var(--card)); border: 1px solid hsl(var(--border)); border-radius: 12px; padding: 12px; box-shadow: 0 -3px 16px hsl(var(--foreground) / .03); }
+.bb-step-actions > button { flex: 1; }
+.bb-staff-header { background: #0f172a; color: #f8fafc; }
+.bb-staff-header a:hover { color: #fff; }
+.bb-staff-shell > main { padding-bottom: 32px; }
+.bb-staff-nav, .bb-referrer-nav { position: fixed; inset: auto 0 0; z-index: 40; display: flex; justify-content: space-around; gap: 2px; padding: 6px 8px max(6px, env(safe-area-inset-bottom)); border-top: 1px solid hsl(var(--border)); background: hsl(var(--card)); color: hsl(var(--muted-foreground)); }
+.bb-staff-nav a, .bb-referrer-nav button { display: flex; flex: 1; min-width: 0; min-height: 60px; align-items: center; justify-content: center; flex-direction: column; gap: 5px; padding: 5px 2px; border-radius: 8px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.bb-staff-nav svg, .bb-referrer-nav svg { width: 21px; height: 21px; }
+.bb-staff-nav a[aria-current], .bb-referrer-nav button[aria-current] { color: hsl(var(--primary)); background: hsl(var(--accent)); }
+.bb-staff-shell, .bb-referrer-shell { padding-bottom: calc(82px + env(safe-area-inset-bottom)); }
+.bb-case-banner { background: #115e59; color: #fff; border-radius: 14px; padding: 18px; }
+.bb-patient-initials { font-size: 24px; line-height: 1.2; font-weight: 700; letter-spacing: -.02em; }
+.bb-status-strip { display: flex; flex-wrap: wrap; gap: 12px 24px; padding: 12px 16px; border: 1px solid hsl(var(--border)); border-radius: 10px; background: hsl(var(--card)); font-size: 13px; }
+.bb-status-strip strong { font-size: 16px; font-variant-numeric: tabular-nums; margin-right: 4px; }
+@media (min-width: 768px) {
+  .bb-referrer-nav { position: static; justify-content: flex-start; border: 1px solid hsl(var(--border)); border-radius: 12px; padding: 5px; }
+  .bb-referrer-nav button { flex: 0 1 auto; flex-direction: row; gap: 8px; min-height: 44px; padding: 10px 20px; font-size: 14px; }
+  .bb-referrer-nav svg { width: 18px; height: 18px; }
+  .bb-referrer-shell { padding-bottom: 0; }
+  .bb-step-actions { bottom: 16px; }
+}
+@media (min-width: 1024px) {
+  .bb-staff-shell .bb-staff-header { position: fixed; inset: 0 auto 0 0; width: 220px; height: 100dvh; border-right: 1px solid #1e293b; }
+  .bb-staff-header > div { min-height: 100%; display: flex; flex-direction: column; align-items: stretch; padding: 28px 18px; }
+  .bb-staff-nav { position: static; flex-direction: column; justify-content: flex-start; gap: 6px; border: 0; border-radius: 0; padding: 20px 0; margin-top: 12px; background: transparent; color: #cbd5e1; }
+  .bb-staff-nav a { flex: 0; flex-direction: row; justify-content: flex-start; gap: 12px; min-height: 48px; padding: 12px 14px; font-size: 14px; }
+  .bb-staff-nav a[aria-current] { background: #134e4a; color: #ccfbf1; }
+  .bb-staff-actions { margin-top: auto; margin-left: 0; flex-wrap: wrap; border-top: 1px solid #334155; padding-top: 18px; }
+  .bb-staff-actions > span { order: -1; width: 100%; font-size: 13px; }
+  .bb-staff-shell { padding-bottom: 0; }
+  .bb-staff-shell > main, .bb-staff-shell > footer { margin-left: 220px; max-width: calc(100% - 220px); padding-left: 32px; padding-right: 32px; }
+}
+@media (prefers-reduced-motion: reduce) { .bb-role-card { transition: none; } }

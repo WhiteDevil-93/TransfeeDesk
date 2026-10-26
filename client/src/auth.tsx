@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { useLocation } from "wouter";
 import type { User } from "@shared/schema";
 import { API_BASE, apiRequest, queryClient, session } from "./lib/queryClient";
+import { dismissToasts } from "@/hooks/use-toast";
 
 const STAFF_KEY = "bb_staff_token", REFERRER_KEY = "td_token";
 const readToken = () => { try { return sessionStorage.getItem(STAFF_KEY) || localStorage.getItem(REFERRER_KEY) || ""; } catch { return ""; } };
@@ -23,7 +24,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [expired, setExpired] = useState(false), [restoreError, setRestoreError] = useState("");
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
-    session.onExpire = () => { clearTokens(); setUser(null); setExpired(true); queryClient.clear(); };
+    session.onExpire = () => { clearTokens(); dismissToasts(); setUser(null); setExpired(true); queryClient.clear(); };
     return () => { session.onExpire = undefined; };
   }, []);
   useEffect(() => {
@@ -41,13 +42,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => { active = false; };
   }, [attempt]);
   const signIn: AuthState["signIn"] = ({ token, user }) => {
-    clearTokens(); session.token = token; queryClient.clear();
+    clearTokens(); dismissToasts(); session.token = token; queryClient.clear();
     try { if (user.role === "referrer") localStorage.setItem(REFERRER_KEY, token); else sessionStorage.setItem(STAFF_KEY, token); } catch {}
     setUser(user); setExpired(false); setRestoreError(""); navigate(user.role === "referrer" && /^\/refer\/(MEU|TEU|SEU)$/.test(location) ? location : workspaceFor(user));
   };
   const signOut: AuthState["signOut"] = async (destination = "/") => {
     const token = session.token;
-    clearTokens(); session.token = ""; setUser(null); setExpired(false); setRestoreError(""); setAttempt(x => x + 1); queryClient.clear(); navigate(destination);
+    clearTokens(); dismissToasts(); session.token = ""; setUser(null); setExpired(false); setRestoreError(""); setAttempt(x => x + 1); queryClient.clear(); navigate(destination);
     if (token) await fetch(`${API_BASE}/api/me/logout`, { method: "POST", headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
   };
   const refreshUser = async () => {

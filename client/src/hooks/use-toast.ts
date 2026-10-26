@@ -188,4 +188,6 @@ function useToast() {
   }
 }
 
-export { useToast, toast }
+function dismissToasts() { dispatch({ type: "REMOVE_TOAST" }) }
+
+export { useToast, toast, dismissToasts }

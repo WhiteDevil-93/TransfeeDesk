@@ -120,7 +120,7 @@ function Referrers() {
 }
 
 export function Admin({ me }: { me: User }) {
-  return <div className="space-y-4"><h1 className="text-xl font-semibold">Admin</h1>
+  return <div className="space-y-5"><div className="space-y-2"><p className="text-xs font-semibold uppercase tracking-widest text-primary">Workspace management</p><h1 className="text-2xl font-bold tracking-tight">Admin</h1></div>
     <p className="text-sm text-muted-foreground">{me.role==="admin"?"Global administrator: access to every unit.":"Unit administrator: manage team members in "+me.team+". Daily roster changes are under On call."}</p>
     <Tabs defaultValue="users"><TabsList><TabsTrigger value="users">Users</TabsTrigger>{me.role==="admin"&&<><TabsTrigger value="referrers">Referrers</TabsTrigger><TabsTrigger value="audit">Audit log</TabsTrigger><TabsTrigger value="data">Privacy and data</TabsTrigger></>}</TabsList>
       <TabsContent value="users" className="mt-4"><Users me={me} /></TabsContent>{me.role==="admin"&&<><TabsContent value="referrers" className="mt-4"><Referrers /></TabsContent><TabsContent value="audit" className="mt-4"><Audit /></TabsContent><TabsContent value="data" className="mt-4"><Data /></TabsContent></>}</Tabs></div>;

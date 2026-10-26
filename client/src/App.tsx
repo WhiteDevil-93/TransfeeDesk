@@ -1,4 +1,4 @@
-import { cloneElement, isValidElement, useId, useState, useMemo, useEffect, useRef, type ReactNode } from "react";
+import { cloneElement, isValidElement, useId, useState, useMemo, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { Switch, Route, Router, Link, useLocation } from "wouter";
 import { useHashLocation } from "wouter/use-hash-location";
 import { QueryClientProvider, useQuery, useMutation } from "@tanstack/react-query";
@@ -11,17 +11,19 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Check, X, Clock, Copy, MessageCircle, Phone, Users, Inbox, Stethoscope, LogOut, Trash2, Search, Bell, BellRing, MapPin, CalendarDays, Siren, BedDouble, AlarmClock, Settings, ExternalLink, Send, ShieldCheck, KeyRound } from "lucide-react";
+import { ArrowRight, ChevronRight, Eye, EyeOff, Check, X, Clock, Copy, MessageCircle, Phone, Users, Inbox, Stethoscope, LogOut, Trash2, Search, Bell, BellRing, MapPin, CalendarDays, Siren, BedDouble, AlarmClock, Settings, ExternalLink, Send, ShieldCheck, KeyRound } from "lucide-react";
 import { unlockAudio, sounds, notify, askNotify, canNotify, defaultSettings, type AlertSettings } from "./alerts";
 import type { Referral, Doctor, Status, RosterSpec, RosterContact, User, AuditRow, AppSettings, Followup } from "@shared/schema";
 import { Admin } from "./admin";
 import { Portal } from "./portal";
 import { AuthProvider, useAuth, workspaceFor } from "./auth";
 import { TEAMS, TEAM_NAMES } from "@shared/teams";
+import { AccountNotice, AudienceSwitch, BackHome, PriorityPill } from "./components/clinical-ui";
+import "./clinical.css";
 import { TeamSelect, ReferrerPortal, Timeline, Images, UnitRoster, messageOf } from "./workflows";
 type Me = User;
 
@@ -32,7 +34,7 @@ const Logo = () => (
   </svg>
 );
 const pColor: Record<string,string> = { P1: "bg-red-600 text-white", P2: "bg-amber-500 text-black", P3: "bg-emerald-600 text-white" };
-const sLabel: Record<Status,string> = { pending: "New", accepted: "Accepted", declined: "Declined", waiting: "Waiting", advised:"Advice sent" };
+const sLabel: Record<Status,string> = { pending: "New", accepted: "Accepted for transfer", declined: "Declined", waiting: "Waiting", advised:"Advice sent" };
 const sColor: Record<Status,string> = { pending: "bg-sky-100 text-sky-900 dark:bg-sky-900 dark:text-sky-100", accepted: "bg-emerald-100 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100", declined: "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200", waiting: "bg-amber-100 text-amber-900 dark:bg-amber-900 dark:text-amber-100", advised:"bg-teal-100 text-teal-900 dark:bg-teal-900 dark:text-teal-100" };
 const ago = (iso: string) => { const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m/60)} h ago` : new Date(iso).toLocaleDateString(); };
 const waNum = (p: string) => { const d = p.replace(/\D/g, ""); return d.startsWith("0") ? "27" + d.slice(1) : d; };
@@ -68,47 +70,46 @@ function Shell({ children, public: pub, me, onLogout, alertCount, onSettings, ad
   const [loc] = useLocation();
   const { user } = useAuth();
   const nav = [["/queue", "Queue", Inbox], ["/oncall", "On call", CalendarDays], ["/catchments", "Catchments", MapPin], ["/doctors", "Doctors", Stethoscope], ...(admin ? [["/admin", "Admin", ShieldCheck]] : [])] as const;
-  return <div className="min-h-screen bg-background"><header className="border-b bg-card sticky top-0 z-30"><div className="max-w-6xl mx-auto px-4 py-3 min-h-14 flex flex-wrap items-center gap-2">
+  return <div className={`min-h-screen bg-background ${pub ? user?.role === "referrer" && (loc === "/portal" || loc.startsWith("/refer")) ? "bb-referrer-shell" : "" : "bb-staff-shell"}`}><header className={`border-b sticky top-0 z-30 ${pub ? "bb-public-header" : "bb-staff-header"}`}><div className="max-w-6xl mx-auto px-4 py-3 min-h-14 flex flex-wrap items-center gap-2">
     <Link href="/" className="flex items-center gap-2 font-semibold" aria-label="BaraBridge home"><span className="text-primary"><Logo /></span><span>BaraBridge</span></Link>
-    {pub && <nav aria-label="Account navigation" className="ml-auto flex flex-wrap gap-x-4 gap-y-2 text-sm"><Link href="/" className="underline">Home</Link><Link href={user && user.role !== "referrer" ? "/queue" : "/login"} className="underline">{user && user.role !== "referrer" ? "Referral desk" : "Staff sign-in"}</Link><Link href="/portal" className="underline">{user?.role === "referrer" ? "My consults" : "Referrer portal"}</Link></nav>}
-    {!pub && <nav aria-label="Staff navigation" className="order-last w-full flex flex-wrap gap-1 md:order-none md:w-auto">{(nav as unknown as any[]).map(([h,l,I]: any) => <Link key={h} href={h} className={`inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium ${loc===h ? "bg-secondary text-secondary-foreground" : "hover:bg-accent"}`} aria-current={loc===h?"page":undefined} data-testid={`link-${l}`}><I className="h-4 w-4" />{l}</Link>)}</nav>}
-    {!pub && <div className="ml-auto flex items-center gap-1 text-sm">
+    {!pub && <span className="rounded-md bg-white/10 px-2.5 py-1 text-xs font-semibold">{user?.role === "admin" ? "Admin" : user?.team || "No unit"}</span>}
+    {pub && <nav aria-label="Account navigation" className="bb-public-nav ml-auto flex flex-wrap gap-x-4 text-sm"><Link href="/">Home</Link><Link href={user && user.role !== "referrer" ? "/queue" : "/login"}>{user && user.role !== "referrer" ? "Referral desk" : "Staff sign-in"}</Link><Link href="/portal">{user?.role === "referrer" ? "My consults" : "Referrer portal"}</Link></nav>}
+    {!pub && <nav aria-label="Staff navigation" className="bb-staff-nav">{(nav as unknown as any[]).map(([h,l,I]: any) => <Link key={h} href={h} aria-current={loc===h?"page":undefined} data-testid={`link-${l}`}><I className="h-4 w-4" />{l}</Link>)}</nav>}
+    {!pub && <div className="bb-staff-actions ml-auto flex items-center gap-1 text-sm">
       <Button size="icon" variant="ghost" onClick={onSettings} aria-label="Alert settings" className="relative" data-testid="button-alerts">{alertCount ? <BellRing className="h-4 w-4 text-red-600" /> : <Bell className="h-4 w-4" />}{alertCount ? <span className="absolute -top-0.5 -right-0.5 bg-red-600 text-white text-[10px] rounded-full h-4 min-w-4 px-1 grid place-items-center">{alertCount}</span> : null}</Button>
       <span className="font-medium hidden sm:inline">{me}</span><Button size="icon" variant="ghost" onClick={onLogout} aria-label="Log out"><LogOut className="h-4 w-4" /></Button></div>}
   </div></header><main className="max-w-6xl mx-auto px-4 py-6">{children}</main>
-  <footer className="max-w-6xl mx-auto px-4 pb-6 text-sm text-muted-foreground"><nav aria-label="Help and referral navigation" className="flex flex-wrap gap-x-4 gap-y-2"><Link href="/" className="underline">Home</Link><Link href="/followup" className="underline">Follow up a referral</Link><Link href="/status" className="underline">Check referral status</Link><Link href="/privacy" className="underline">Privacy notice (POPIA)</Link></nav></footer></div>;
+  <footer className="bb-public-footer max-w-6xl mx-auto px-4 pb-6 text-sm text-muted-foreground"><nav aria-label="Help and referral navigation" className="flex flex-wrap gap-x-4"><Link href="/" className="underline">Home</Link><Link href="/followup" className="underline">Follow up a referral</Link><Link href="/status" className="underline">Check referral status</Link><Link href="/privacy" className="underline">Privacy notice (POPIA)</Link></nav></footer></div>;
 }
 
 function Login() {
   const { signIn, expired } = useAuth();
   const [username, setU] = useState(""); const [password, setP] = useState(""); const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const go = async (e: any) => { e.preventDefault(); unlockAudio(); setBusy(true); setErr("");
     try { const r = await (await apiRequest("POST", "/api/login", { username, password }, { signal: AbortSignal.timeout(20000) })).json(); signIn(r); if (r.user.role !== "referrer") askNotify(); }
     catch (x: any) { setErr(String(x.message || "").replace(/^\d+:\s*/, "").replace(/^\{"message":"(.*)"\}$/, "$1") || "Sign-in failed"); } finally { setBusy(false); } };
-  return <Shell public><div className="max-w-sm mx-auto py-4 sm:py-8"><Card className="p-6 space-y-4"><h1 className="text-xl font-semibold">Receiving staff sign-in</h1>
+  return <Shell public><div className="max-w-md mx-auto space-y-4 pb-4"><BackHome/><Card className="p-6 sm:p-8 space-y-6"><div className="space-y-2"><p className="text-xs font-semibold uppercase tracking-wider text-primary">Clinical workspace</p><h1 className="text-2xl font-bold tracking-tight">Receiving staff sign-in</h1><p className="text-sm leading-relaxed text-muted-foreground">Review referrals and coordinate care for your unit.</p></div><AudienceSwitch audience="staff"/>
     {expired && <p role="status" className="text-sm text-muted-foreground">Your session ended. Sign in again to continue.</p>}
-    <p className="text-sm text-muted-foreground">Sign in with your own account. Every case you open or change is recorded. Allow notifications so P1 alerts reach you.</p>
-    <form className="space-y-3" onSubmit={go}><Field label="Username"><Input autoComplete="username" value={username} onChange={(e) => setU(e.target.value)} required data-testid="input-username" /></Field>
-    <Field label="Password"><Input type="password" autoComplete="current-password" value={password} onChange={(e) => setP(e.target.value)} required data-testid="input-password" /></Field>
+    <form className="space-y-5" onSubmit={go}><Field label="Username"><Input autoComplete="username" placeholder="Your staff username" value={username} onChange={(e) => setU(e.target.value)} required data-testid="input-username" /></Field>
+    <Field label="Password"><div className="relative"><Input aria-label="Password" type={showPassword ? "text" : "password"} autoComplete="current-password" className="pr-12" value={password} onChange={(e) => setP(e.target.value)} required data-testid="input-password"/><button type="button" className="absolute right-0 top-0 grid h-12 w-12 place-items-center text-muted-foreground" onClick={() => setShowPassword(x => !x)} aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? <EyeOff className="h-4 w-4"/> : <Eye className="h-4 w-4"/>}</button></div></Field>
     {err && <p role="alert" className="text-sm text-destructive">{err}</p>}<Button className="w-full" disabled={busy} data-testid="button-login">{busy ? "Signing in..." : "Sign in"}</Button></form>
-    <p className="text-sm text-muted-foreground">MEU, TEU and SEU staff accounts are created by your unit administrator. Ask them for an account if you haven't received one.</p>
-    <p className="text-xs text-muted-foreground">Sessions end after 30 minutes of inactivity. Forgot your password? Ask a BaraBridge admin to reset it.</p>
+    <details className="rounded-lg border bg-muted/40 p-3 text-sm"><summary className="cursor-pointer font-medium">Need an account or password reset?</summary><p className="pt-3 leading-relaxed text-muted-foreground">MEU, TEU and SEU staff accounts are created by your unit administrator. Ask them for an account or a password reset.</p></details>
+    <AccountNotice>Every case you open or change is recorded. Sessions end after 30 minutes of inactivity.</AccountNotice>
     <p className="text-sm">Sending a patient referral? <Link href="/portal" className="underline font-medium">Referrer sign-up / sign-in</Link></p></Card></div></Shell>;
 }
 
 /* ---------- LANDING (public entry) ---------- */
 function Landing() {
   const { user } = useAuth();
-  return <Shell public><div className="max-w-4xl mx-auto py-4 sm:py-10 w-full">
-      <h1 className="text-2xl font-semibold mb-1">Welcome to BaraBridge</h1>
-      <p className="text-sm text-muted-foreground mb-6">Sending a referral? Use the referrer portal. Receiving and managing referrals? Use the staff referral desk.</p>
-      {user && <Card className="p-4 mb-6 space-y-2"><p className="text-sm">Signed in as {user.name}.</p><Link href={workspaceFor(user)} className="underline font-medium">{user.role === "referrer" ? "Continue to my consults" : "Continue to referral desk"}</Link></Card>}
+  return <Shell public><div className="max-w-3xl mx-auto py-5 sm:py-12 w-full space-y-7">
+      <div className="text-center space-y-3"><p className="text-xs font-semibold uppercase tracking-widest text-primary">Hospital referrals</p><h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Welcome to BaraBridge</h1><p className="max-w-md mx-auto text-base leading-relaxed text-muted-foreground">One place to send referrals, review consults and coordinate transfers.</p></div>
+      {user && <Card className="p-5 border-primary/25 bg-accent space-y-2"><p className="text-sm">Signed in as <strong>{user.name}</strong></p><Link href={workspaceFor(user)} className="inline-flex min-h-11 items-center gap-2 font-semibold text-primary">{user.role === "referrer" ? "Continue to my consults" : "Continue to referral desk"}<ArrowRight className="h-4 w-4"/></Link></Card>}
       <div className="grid sm:grid-cols-2 gap-4">
-        <Link href="/login"><Card className="p-6 hover-elevate space-y-3"><div className="flex items-center gap-2 text-primary"><Inbox className="h-6 w-6" /><span className="font-semibold text-foreground">Staff sign-in</span></div>
-          <p className="text-sm text-muted-foreground">Receiving teams: open the referral desk, review consults, send advice and track transfers. P1 alerts and the on-call roster.</p></Card></Link>
-        <Link href="/portal"><Card className="p-6 hover-elevate space-y-3"><div className="flex items-center gap-2 text-primary"><Stethoscope className="h-6 w-6" /><span className="font-semibold text-foreground">I'm a referring clinician</span></div>
-          <p className="text-sm text-muted-foreground">Doctors, nurses and other professionals: create an account, get verified, then send referrals. See your consults, clinical advice and the on-call roster.</p></Card></Link>
+        <Link href="/portal" className="bb-role-card"><span className="bb-role-icon"><Stethoscope className="h-6 w-6"/></span><div className="flex-1 space-y-2"><h2 className="text-xl font-bold">Send a referral</h2><p className="text-sm leading-relaxed text-muted-foreground">For doctors, nurses and clinicians referring to MEU, TEU or SEU.</p><p className="text-sm font-semibold text-primary">Sign in or create an account</p></div><ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground mt-1"/></Link>
+        <Link href="/login" className="bb-role-card"><span className="bb-role-icon bg-secondary text-secondary-foreground"><Inbox className="h-6 w-6"/></span><div className="flex-1 space-y-2"><h2 className="text-xl font-bold">Receiving teams</h2><p className="text-sm leading-relaxed text-muted-foreground">Review incoming consults, send advice and manage transfers for your unit.</p><p className="text-sm font-semibold text-primary">Staff sign-in</p></div><ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground mt-1"/></Link>
       </div>
+      <div className="border-t pt-6 space-y-5"><Link href="/followup" className="flex min-h-16 items-center gap-3 rounded-xl border bg-card p-4 font-medium"><Search className="h-5 w-5 text-muted-foreground"/><span className="flex-1">Follow up an existing case<span className="block text-xs font-normal text-muted-foreground mt-1">Use your reference and private follow-up code</span></span><ArrowRight className="h-4 w-4 text-primary"/></Link><AccountNotice>Share only the information needed for care. Use patient initials and keep referral codes private.</AccountNotice></div>
     </div></Shell>;
 }
 
@@ -208,31 +209,29 @@ function Queue({ me, data, st, onOpen, user }: { me: string; data: Referral[]; s
   const list = useMemo(() => data.filter(r=>unit==="all"||r.team===unit).filter(r => tab==="all" || (tab==="open" ? ["pending","waiting"].includes(r.status)||hasUpdate(r) : r.status===tab))
     .filter(r => sp === "all" || r.specialty === sp)
     .filter(r => !q || JSON.stringify(r).toLowerCase().includes(q.toLowerCase()))
-    .sort((a,b) => Number(hasUpdate(b))-Number(hasUpdate(a)) || order[a.status]-order[b.status] || pr[a.priority]-pr[b.priority] || a.createdAt.localeCompare(b.createdAt)), [data, tab, q, sp,unit]);
-  const count = (s: string) => data.filter(r => r.status===s).length;
-  const overdue = data.filter(r => isOverdue(r, st));
+    .sort((a,b) => pr[a.priority]-pr[b.priority] || Number(hasUpdate(b))-Number(hasUpdate(a)) || order[a.status]-order[b.status] || a.createdAt.localeCompare(b.createdAt)), [data, tab, q, sp,unit]);
+  const scoped = data.filter(r => unit === "all" || r.team === unit);
+  const count = (s: string) => scoped.filter(r => r.status===s).length;
+  const overdue = scoped.filter(r => isOverdue(r, st));
   const link=referLink(unit==="all"?undefined:unit);
   const shareMsg = `Hi, please submit your ${unit==="all"?"":unit+" "}referral here: ${link}`;
   const usedSpecs = Array.from(new Set(data.map(r => r.specialty).filter(Boolean)));
   return <div className="space-y-5">
-    <div className="flex gap-3 flex-wrap items-center"><h1 className="text-xl font-semibold">{user.role==="admin"?"All-unit referral desk":`${user.team||"Unassigned"} referral desk`}</h1>{user.role==="admin" && <div className="w-64"><TeamSelect value={unit} onChange={setUnit} all/></div>}</div>
+    <div className="flex gap-3 flex-wrap items-center justify-between"><div><p className="text-xs font-semibold uppercase tracking-widest text-primary mb-2">Receiving workspace</p><h1 className="text-2xl font-bold tracking-tight">{user.role==="admin"?"All-unit referral desk":`${user.team||"Unassigned"} referral desk`}</h1></div>{user.role==="admin" && <div className="w-64"><TeamSelect value={unit} onChange={setUnit} all/></div>}</div>
     {user.role!=="admin" && !user.team && <Card className="p-4 text-sm border-amber-500">No unit assigned. Ask the global administrator to assign your account to MEU, TEU or SEU.</Card>}
     {overdue.length > 0 && <Card className="p-3 border-amber-500 bg-amber-50 dark:bg-amber-950 flex items-center gap-3"><AlarmClock className="h-5 w-5 text-amber-600 shrink-0" /><p className="text-sm flex-1"><b>{overdue.length}</b> consult{overdue.length > 1 ? "s need" : " needs"} attention: {overdue.slice(0, 3).map(r => `${r.priority} ${r.diagnosis}`).join(", ")}{overdue.length > 3 ? "..." : ""}</p><Button size="sm" variant="outline" onClick={() => onOpen(overdue[0])}>Review</Button></Card>}
-    <Card className="p-4 flex flex-col sm:flex-row gap-3 sm:items-center"><div className="flex-1 min-w-0"><p className="text-sm font-medium">Referral link to send callers</p><p className="text-xs text-muted-foreground truncate font-mono">{link}</p></div>
-      <div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => { navigator.clipboard?.writeText(link); toast({ title: "Link copied" }); }} data-testid="button-copy-link"><Copy className="h-4 w-4 mr-1" />Copy</Button>
-      <a href={`https://wa.me/?text=${encodeURIComponent(shareMsg)}`} target="_blank" rel="noreferrer"><Button size="sm" data-testid="button-wa-link"><MessageCircle className="h-4 w-4 mr-1" />Send via WhatsApp</Button></a></div></Card>
-    <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">{[["New","pending"],["Waiting","waiting"],["Accepted","accepted"],["Declined","declined"]].map(([l,s]) => <Card key={s} className="p-4"><p className="text-xs text-muted-foreground">{l}</p><p className="text-xl font-semibold tabular-nums" data-testid={`stat-${s}`}>{count(s)}</p></Card>)}
-      <Card className="p-4 col-span-2 sm:col-span-1"><p className="text-xs text-muted-foreground">Overdue</p><p className={`text-xl font-semibold tabular-nums ${overdue.length ? "text-amber-600" : ""}`} data-testid="stat-overdue">{overdue.length}</p></Card></div>
-    <div className="flex flex-col md:flex-row gap-3 md:items-center justify-between"><Tabs value={tab} onValueChange={setTab}><TabsList><TabsTrigger value="open">Open</TabsTrigger><TabsTrigger value="accepted">Accepted</TabsTrigger><TabsTrigger value="advised">Advice</TabsTrigger><TabsTrigger value="declined">Declined</TabsTrigger><TabsTrigger value="all">All</TabsTrigger></TabsList></Tabs>
-      <div className="flex gap-2"><Select value={sp} onValueChange={setSp}><SelectTrigger className="w-48"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All specialties</SelectItem>{usedSpecs.map(s => <SelectItem key={s} value={s}>{specName(specs, s)}</SelectItem>)}</SelectContent></Select>
-      <div className="relative sm:w-56"><Search className="h-4 w-4 absolute left-2.5 top-2.5 text-muted-foreground" /><Input className="pl-8" placeholder="Search" value={q} onChange={(e) => setQ(e.target.value)} /></div></div></div>
+    <div className="bb-status-strip">{[["New","pending"],["Waiting","waiting"],["Accepted","accepted"],["Declined","declined"]].map(([label,status]) => <span key={status}><strong data-testid={`stat-${status}`}>{count(status)}</strong>{label}</span>)}<span className={overdue.length ? "text-amber-800" : "text-muted-foreground"}><strong data-testid="stat-overdue">{overdue.length}</strong>Overdue</span></div>
+    <div className="space-y-3"><div role="group" aria-label="Filter referral status" className="flex gap-1 overflow-x-auto rounded-lg border bg-card p-1">{[["open","Open"],["waiting","Waiting"],["accepted","Accepted"],["advised","Advice"],["declined","Declined"],["all","All"]].map(([value,label]) => <button type="button" key={value} aria-pressed={tab === value} onClick={() => setTab(value)} className={`min-h-11 shrink-0 rounded-md px-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${tab === value ? "bg-accent text-primary" : "text-muted-foreground"}`}>{label}</button>)}</div>
+      <div className="flex gap-3"><Select value={sp} onValueChange={setSp}><SelectTrigger className="w-40 sm:w-48" aria-label="Filter by specialty"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All specialties</SelectItem>{usedSpecs.map(s => <SelectItem key={s} value={s}>{specName(specs, s)}</SelectItem>)}</SelectContent></Select>
+      <div className="relative flex-1 min-w-0"><Search className="h-4 w-4 absolute left-3 top-4 text-muted-foreground" /><Input className="pl-10" aria-label="Search referral queue" placeholder="Search referrals" value={q} onChange={(e) => setQ(e.target.value)} /></div></div></div>
+    <details className="rounded-xl border bg-card px-4 text-sm"><summary className="min-h-11 py-3 cursor-pointer font-medium">Share referral link with a caller</summary><div className="pb-4 space-y-3"><p className="text-xs text-muted-foreground break-all font-mono">{link}</p><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={async () => { try { await navigator.clipboard.writeText(link); toast({ title: "Link copied" }); } catch { toast({ title: "Couldn't copy. Select and copy the link above.", variant: "destructive" }); } }} data-testid="button-copy-link"><Copy/>Copy</Button><a href={`https://wa.me/?text=${encodeURIComponent(shareMsg)}`} target="_blank" rel="noreferrer"><Button size="sm" data-testid="button-wa-link"><MessageCircle/>Send via WhatsApp</Button></a></div></div></details>
     {isLoading ? <div className="space-y-2">{[1,2,3].map(i => <Skeleton key={i} className="h-20" />)}</div> : list.length===0 ? <Card className="p-10 text-center text-muted-foreground">No referrals here. Send the link to a caller to get started.</Card> :
-    <div className="space-y-2">{list.map(r => { const od = isOverdue(r, st); return <Card key={r.id} data-testid={`card-referral-${r.id}`} onClick={() => onOpen(r)} className={`p-4 cursor-pointer hover-elevate flex gap-4 items-start ${r.priority === "P1" && r.status === "pending" ? "border-l-4 border-l-red-600" : od ? "border-l-4 border-l-amber-500" : ""}`}>
-      <span className={`rounded px-2 py-1 text-xs font-bold ${pColor[r.priority]}`}>{r.priority}</span>
-      <div className="flex-1 min-w-0"><div className="flex flex-wrap gap-x-2 items-center"><span className="font-semibold">{r.diagnosis}</span><span className="text-sm text-muted-foreground">{r.patientInitials}, {r.age}{r.sex}</span></div>
-        <p className="text-sm text-muted-foreground truncate">{specName(specs, r.specialty)} · Dr {r.doctorName.replace(/^dr\.?\s*/i,"")} · {r.hospital}</p>
-        <div className="flex flex-wrap gap-1.5 mt-1"><Badge variant="outline">{r.team||"Unassigned"}</Badge>{hasUpdate(r)&&<Badge className="bg-sky-700 text-white">New follow-up</Badge>}{r.consultType==="advice"&&<Badge variant="outline">Advice only</Badge>}{r.bedNeeded && <Badge variant="outline" className="font-normal"><BedDouble className="h-3 w-3 mr-1" />{r.bedNeeded}</Badge>}{r.bedStatus && r.bedStatus !== "Not assigned" && <Badge variant="outline" className="font-normal">{r.bedStatus}{r.bedWard && ` · ${r.bedWard}`}</Badge>}{r.status === "waiting" && r.remindAt && <Badge variant="outline" className="font-normal"><AlarmClock className="h-3 w-3 mr-1" />{new Date(r.remindAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</Badge>}</div>{r.decidedBy&&<p className="text-xs text-muted-foreground mt-1">Responded by {r.decidedBy}</p>}</div>
-      <div className="text-right shrink-0 space-y-1"><Badge className={sColor[r.status]}>{sLabel[r.status]}</Badge>{od && <Badge className="bg-amber-500 text-black ml-1">Overdue</Badge>}<p className="text-xs text-muted-foreground">{ago(r.createdAt)}</p></div></Card>; })}</div>}
+    <div className="space-y-3">{list.map(r => { const od = isOverdue(r, st); return <button type="button" key={r.id} data-testid={`card-referral-${r.id}`} onClick={() => onOpen(r)} className={`block w-full rounded-xl border bg-card p-5 text-left shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${r.priority === "P1" && r.status === "pending" ? "border-l-4 border-l-red-500" : od ? "border-l-4 border-l-amber-500" : ""}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2"><PriorityPill priority={r.priority}/><span className="font-mono text-xs text-muted-foreground">{r.ref}</span></div>
+      <div className="mt-4 flex flex-wrap justify-between items-center gap-3"><p className="bb-patient-initials">{r.patientInitials}<span className="ml-2 text-sm font-normal text-muted-foreground">{r.age} · {r.sex}</span></p><Badge className={sColor[r.status]}>{sLabel[r.status]}</Badge></div>
+      <p className="mt-3 text-base font-semibold leading-relaxed">{r.diagnosis}</p><p className="mt-1 text-sm leading-relaxed text-muted-foreground">From {r.hospital} · Dr {r.doctorName.replace(/^dr\.?\s*/i,"")}</p>
+      <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-3"><Badge variant="outline">{r.team||"Unassigned"}</Badge>{hasUpdate(r)&&<Badge className="bg-sky-700 text-white">New follow-up</Badge>}{r.consultType==="advice"&&<Badge variant="outline">Advice only</Badge>}{r.bedStatus && r.bedStatus !== "Not assigned" && <Badge variant="outline">{r.bedStatus}{r.bedWard && ` · ${r.bedWard}`}</Badge>}{od && <Badge className="bg-amber-50 text-amber-900 border border-amber-200">Overdue</Badge>}<span className="ml-auto text-xs text-muted-foreground">{ago(r.createdAt)}</span></div>
+    </button>; })}</div>}
   </div>;
 }
 
@@ -278,6 +277,7 @@ function Detail({ r: lite, me, onClose, user }: { r: Referral|null; me: string; 
   const [note, setNote] = useState(""); const [ward, setWard] = useState<string|null>(null); const [map, setMap] = useState(false); const { toast } = useToast(); const { data: specs } = useSpecs();
   const m = useMutation({ mutationFn: async (u: any) => (await apiRequest("PATCH", `/api/referrals/${r!.id}`, u)).json(), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/referrals"] }); queryClient.invalidateQueries({ queryKey: [`/api/referrals/${lite?.id}`] }); },onError:e=>toast({title:messageOf(e),variant:"destructive"}) });
   const [portalCode,setPortalCode]=useState("");
+  const [caseTab, setCaseTab] = useState("clinical");
   useEffect(() => { setWard(null); setMap(false); }, [r?.id]);
   useEffect(() => { if (r && r.priority === "P1" && !r.ackAt) m.mutate({ ack: me }); }, [r?.id]);
   if (!r) return null;
@@ -293,37 +293,36 @@ function Detail({ r: lite, me, onClose, user }: { r: Referral|null; me: string; 
   const decide = (s: Status) => { m.mutate({ status: s, decisionNote: note || r.decisionNote, decidedBy: me, ...(s === "waiting" && !r.remindAt ? { remindAt: new Date(Date.now() + 30 * 60000).toISOString() } : {}) },{onSuccess:()=>{toast({title:sLabel[s],description:"Saved to the referral and secure portal. Tap WhatsApp to notify the referrer."});setNote("");}}); };
   const remind = (mn: number) => { m.mutate({ remindAt: new Date(Date.now() + mn * 60000).toISOString(), ...(r.status === "pending" ? { status: "waiting", decidedBy: me } : {}) }); toast({ title: `Reminder in ${mn >= 60 ? mn / 60 + " h" : mn + " min"}` }); };
   const Sec = ({ t, v }: any) => <div><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t}</p><p className="text-sm whitespace-pre-wrap">{v || "-"}</p></div>;
-  return <Sheet open onOpenChange={(o) => { if (!o) { setNote(""); onClose(); } }}><SheetContent className="w-full sm:max-w-xl overflow-y-auto"><SheetHeader><SheetTitle className="flex items-center gap-2 pr-6"><span className={`rounded px-2 py-0.5 text-xs font-bold ${pColor[r.priority]}`}>{r.priority}</span>{r.diagnosis}</SheetTitle></SheetHeader>
-    <div className="space-y-5 mt-4">
-      {loadError&&<p className="text-sm text-destructive">Could not load this referral. Your unit access may have changed.</p>}
+  return <Sheet open onOpenChange={(o) => { if (!o) { setNote(""); onClose(); } }}><SheetContent className="w-full sm:max-w-xl flex flex-col overflow-hidden p-0"><SheetHeader className="shrink-0 border-b p-6 pb-4"><SheetTitle className="flex items-center gap-2 pr-12"><span className={`rounded px-2 py-0.5 text-xs font-bold ${pColor[r.priority]}`}>{r.priority}</span>{r.diagnosis}</SheetTitle></SheetHeader>
+    <div className="min-h-0 flex-1 overflow-y-auto space-y-5 px-6 pb-6 pt-4">
+      {loadError&&<p role="alert" className="text-sm text-destructive">Could not load this referral. Your unit access may have changed.</p>}
+      <div className="bb-case-banner space-y-3"><div className="flex flex-wrap justify-between gap-3"><p className="bb-patient-initials">{r.patientInitials}<span className="ml-2 text-sm font-normal text-teal-100">{r.age} · {r.sex}</span></p><span className="text-sm font-semibold">{r.team || "Unassigned"}</span></div><p className="text-sm text-teal-100">{r.ref} · {r.consultType === "advice" ? "Advice-only request" : "Transfer request"}</p><p className="border-t border-white/20 pt-3 font-semibold">{sLabel[r.status]}</p></div>
       {user.role==="admin"&&<Field label="Receiving unit (global admin routing)"><TeamSelect value={r.team||""} onChange={team=>m.mutate({team})}/></Field>}
       <div className="flex flex-wrap gap-2 items-center text-sm"><Badge className={sColor[r.status]}>{sLabel[r.status]}</Badge><span className="font-mono">{r.ref}</span><span className="text-muted-foreground">{new Date(r.createdAt).toLocaleString()}</span>{r.ackBy && <span className="text-xs text-muted-foreground">Seen by {r.ackBy}</span>}</div>
       <p className="text-xs text-muted-foreground">{r.team||"Unassigned"} · {r.consultType==="advice"?"Advice-only consult":"Transfer request"}{r.openedBy?` · First opened by ${r.openedBy}`:""}</p>
-      <Card className="p-3 text-sm space-y-2"><p className="font-medium">Dr {dr}, {r.hospital}{r.department && ` (${r.department})`}</p>
+      <Tabs value={caseTab} onValueChange={setCaseTab}><TabsList className="w-full" aria-label="Referral information"><TabsTrigger value="clinical">Clinical details</TabsTrigger><TabsTrigger value="history">History</TabsTrigger><TabsTrigger value="images">Images{full?.images?.length ? ` (${full.images.length})` : ""}</TabsTrigger></TabsList>
+      <TabsContent value="clinical" className="space-y-5"><Card className="p-4 text-sm space-y-3"><p className="font-medium">Dr {dr}, {r.hospital}{r.department && ` (${r.department})`}</p>
         <div className="flex flex-wrap gap-2"><a href={`tel:${r.phone}`}><Button size="sm" variant="outline"><Phone className="h-4 w-4 mr-1" />{r.phone}</Button></a>{r.email && <a href={`mailto:${r.email}`} className="text-sm underline self-center">{r.email}</a>}
         </div>
         <CatchmentBox r={r} onSave={(lat, lon, src) => m.mutate({ lat, lon, locSource: src })} /></Card>
       <div className="grid grid-cols-3 gap-3 text-sm"><Sec t="Specialty" v={specName(specs, r.specialty)} /><Sec t="Patient in" v={r.currentLocation} /><Sec t="Bed needed" v={r.bedNeeded} />
         <Sec t="Patient" v={`${r.patientInitials}, ${r.age} ${r.sex}`} /><Sec t="Folder" v={r.folderNo} /><Sec t="Suggested" v={r.suggestedPriority} /></div>
-      <Sec t="History" v={r.history} /><Sec t="Examination" v={r.exam} /><Sec t="Investigations" v={r.investigations} /><Sec t="Request" v={r.reason} />
-      <Images images={full?.images} referralId={r.id}/>
-      <div className="space-y-2"><h3 className="font-semibold text-sm">Updates and response history</h3><Timeline entries={full?.timeline} referralId={r.id}/></div>
+      <Sec t="History" v={r.history} /><Sec t="Examination" v={r.exam} /><Sec t="Investigations" v={r.investigations} /><Sec t="Request" v={r.reason} /></TabsContent>
+      <TabsContent value="images" className="space-y-3"><h3 className="font-semibold">Clinical images</h3>{!full?.images?.length && <p className="text-sm text-muted-foreground">No initial referral images. Images attached to updates are in History.</p>}<Images images={full?.images} referralId={r.id}/></TabsContent>
+      <TabsContent value="history" className="space-y-3"><h3 className="font-semibold text-sm">Updates and response history</h3><Timeline entries={full?.timeline} referralId={r.id}/>{!full?.timeline?.length && <p className="text-sm text-muted-foreground">No updates recorded yet.</p>}</TabsContent></Tabs>
       <OnCallBox spec={r.specialty} msg={fwd} onShare={logShare} show={user.role==="admin"} />
       <div className="border-t pt-4 space-y-3"><div className="flex items-center gap-3"><Label className="w-16">Priority</Label><div className="flex gap-1">{(["P1","P2","P3"] as const).map(p => <Button key={p} size="sm" variant={r.priority===p?"default":"outline"} onClick={() => m.mutate({ priority: p })} data-testid={`button-set-${p}`}>{p}</Button>)}</div></div>
         <div className="flex flex-wrap items-center gap-2"><Label className="w-16">Bed</Label><Select value={r.bedStatus || "Not assigned"} onValueChange={(v) => m.mutate({ bedStatus: v })}><SelectTrigger className="w-44" data-testid="select-bedstatus"><SelectValue /></SelectTrigger><SelectContent>{BEDSTAT.map(b => <SelectItem key={b} value={b}>{b}</SelectItem>)}</SelectContent></Select>
           <Input className="flex-1 min-w-[140px]" placeholder="Ward / bed no." value={ward ?? r.bedWard ?? ""} onChange={(e) => setWard(e.target.value)} onBlur={() => ward !== null && m.mutate({ bedWard: ward })} data-testid="input-bedward" /></div>
-        <Field label="Clinical advice / note to referring doctor"><Textarea rows={4} maxLength={5000} value={note} onChange={(e) => setNote(e.target.value)} placeholder={r.decisionNote || "Type clinical advice, treatment plan or transfer instructions"} data-testid="input-advice" /></Field>
-        <Button className="w-full" variant="outline" disabled={m.isPending||!note.trim()} onClick={()=>decide("advised")} data-testid="button-send-advice">Save and send advice to the secure portal (no transfer)</Button>
-        <div className="grid grid-cols-3 gap-2"><Button onClick={() => decide("accepted")} className="bg-emerald-600 hover:bg-emerald-700 text-white" data-testid="button-accept"><Check className="h-4 w-4 mr-1" />Accept</Button>
-          <Button variant="outline" onClick={() => decide("waiting")} data-testid="button-wait"><Clock className="h-4 w-4 mr-1" />Wait</Button>
-          <Button variant="destructive" onClick={() => decide("declined")} data-testid="button-decline"><X className="h-4 w-4 mr-1" />Decline</Button></div>
+        <div className="rounded-xl border border-primary/25 bg-accent/50 p-4 space-y-3"><Field label="Clinical advice / note to referring doctor"><Textarea rows={4} maxLength={5000} value={note} onChange={(e) => setNote(e.target.value)} placeholder={r.decisionNote || "Type clinical advice, treatment plan or transfer instructions"} data-testid="input-advice" /></Field><p className="text-xs leading-relaxed text-muted-foreground">Choose a decision below. Advice alone does not accept a transfer.</p></div>
+        <div className="grid grid-cols-2 gap-3"><Button disabled={m.isPending} onClick={() => decide("accepted")} className="bg-emerald-700 hover:bg-emerald-800 text-white" data-testid="button-accept"><Check/>Accept transfer</Button><Button variant="outline" disabled={m.isPending||!note.trim()} onClick={()=>decide("advised")} className="border-primary text-primary" data-testid="button-send-advice"><MessageCircle/>Advice only</Button><Button variant="outline" disabled={m.isPending} onClick={() => decide("waiting")} className="text-amber-900 border-amber-300 bg-amber-50" data-testid="button-wait"><Clock/>Wait / hold</Button><Button variant="destructive" disabled={m.isPending} onClick={() => decide("declined")} data-testid="button-decline"><X/>Decline</Button></div>
         {(r.status === "pending" || r.status === "waiting") && <div className="flex flex-wrap items-center gap-1.5"><AlarmClock className="h-4 w-4 text-muted-foreground" /><span className="text-sm text-muted-foreground mr-1">Remind me in</span>{[15, 30, 60, 120].map(mn => <Button key={mn} size="sm" variant="outline" className="h-7 px-2" onClick={() => remind(mn)}>{mn >= 60 ? mn / 60 + "h" : mn + "m"}</Button>)}
           {r.remindAt && <span className="text-xs text-muted-foreground">Set for {new Date(r.remindAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>}</div>}
         {r.status!=="pending" && <a href={`https://wa.me/${waNum(r.phone)}?text=${encodeURIComponent(msg(r.status))}`} target="_blank" rel="noreferrer" onClick={() => logShare(`referring doctor ${r.phone}`)}><Button variant="secondary" className="w-full" data-testid="button-notify"><MessageCircle className="h-4 w-4 mr-1" />Notify Dr {dr} on WhatsApp</Button></a>}
         <a href={`https://wa.me/${waNum(r.phone)}?text=${encodeURIComponent(`Your referral ${r.ref} has been opened by the ${r.team||"receiving"} team. This is an opened receipt, not acceptance for transfer. Please use your secure portal for updates.`)}`} target="_blank" rel="noreferrer" onClick={()=>logShare("opened receipt")}><Button variant="outline" className="w-full">WhatsApp: referral opened</Button></a>
         {user.role!=="clinician"&&<div className="border rounded p-3 space-y-2"><p className="text-xs text-muted-foreground">Legacy referral or lost code? Verify the referring doctor's identity before resetting portal access.</p><Button size="sm" variant="outline" onClick={async()=>{try{const d=await(await apiRequest("POST",`/api/referrals/${r.id}/portal-reset`)).json();setPortalCode(d.code);}catch(e){toast({title:messageOf(e),variant:"destructive"});}}}>Generate new private follow-up code</Button>{portalCode&&<p className="font-mono text-xs break-all select-all">{portalCode}</p>}</div>}
         {r.decidedBy && <p className="text-xs text-muted-foreground">Last update by {r.decidedBy}{r.decidedAt && `, ${ago(r.decidedAt)}`}</p>}
-      </div></div></SheetContent></Sheet>;
+      </div><Button variant="outline" className="w-full" onClick={onClose}>Back to referral queue</Button></div></SheetContent></Sheet>;
 }
 
 /* ---------- ON CALL ---------- */
@@ -392,6 +391,9 @@ function StaffEntry() {
 }
 
 function AppRoutes() {
+  const [location] = useLocation();
+  const { user } = useAuth();
+  useLayoutEffect(() => { window.scrollTo(0, 0); }, [location, user?.id]);
   return <Switch>
     <Route path="/refer/:team" component={({params}:any) => <SessionGate><Shell public><Portal initialTeam={params.team}/></Shell></SessionGate>}/>
     <Route path="/refer"><SessionGate><Shell public><Portal/></Shell></SessionGate></Route>

@@ -43,7 +43,7 @@ const referrerProfile = z.object({
   name: z.string().min(2).max(100),
   email: z.string().email().max(100),
   phone: z.string().min(9).max(30),
-  hospital: z.string().min(2).max(100),
+  hospital: z.string().max(100).optional().default(""),
   department: z.string().max(100).optional().default(""),
   specialty: z.string().min(1).max(100),
   profession: z.enum(["doctor", "nurse", "other"]),

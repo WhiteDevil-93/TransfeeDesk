@@ -18,7 +18,9 @@ const visible = async locator => { await locator.waitFor({ state: "visible" }); 
 const check = name => { checks.push(name); console.log(`PASS ${name}`); };
 const capture = async name => {
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), `${name}: horizontal overflow`);
-  await page.screenshot({ path: path.join(output, `${publicOnly ? "live-" : ""}${name}.png`), fullPage: true });
+  await page.screenshot({ path: path.join(output, `${publicOnly ? "live-" : ""}${name}-viewport.png`), animations: "disabled" });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: path.join(output, `${publicOnly ? "live-" : ""}${name}.png`), fullPage: !(await page.getByRole("dialog").count()), animations: "disabled" });
 };
 const login = async (route, account) => {
   await go(route);
@@ -34,7 +36,9 @@ try {
   await page.getByRole("link", { name: "Go to staff sign-in", exact: true }).click();
   await visible(page.getByRole("heading", { name: "Receiving staff sign-in" })); await capture("03-staff-entry");
   await page.getByRole("link", { name: "BaraBridge home" }).click();
-  await visible(page.getByRole("heading", { name: "Welcome to BaraBridge" })); await capture("04-home");
+  await visible(page.getByRole("heading", { name: "Welcome to BaraBridge" }));
+  assert.equal(await page.evaluate(() => window.scrollY), 0, "Returning home resets the previous screen's scroll position");
+  await capture("04-home");
   for (const [route, heading] of [["/followup", "Follow up a referral"], ["/status", "Referral status"], ["/privacy", "Privacy notice"], ["/missing", "Page not found"]]) {
     await go(route); await visible(page.getByRole("heading", { name: heading, exact: true }));
     await visible(page.getByRole("link", { name: "Staff sign-in", exact: true }));
@@ -63,13 +67,23 @@ try {
     await page.getByRole("button", { name: "Back to my consults", exact: true }).click();
     await page.getByRole("button", { name: "New consult", exact: true }).click();
     await page.getByLabel("Hospital / facility *", { exact: true }).fill("QA test facility");
+    await page.getByRole("button", { name: "Continue to clinical details", exact: true }).click();
+    await visible(page.getByRole("alert").filter({ hasText: /Receiving unit/ }));
     await page.getByTestId("select-team").click(); await page.getByRole("option", { name: /MEU/ }).click();
     const combos = page.getByRole("combobox");
     await combos.nth(1).click(); await page.getByRole("option", { name: "Advice only / no transfer", exact: true }).click();
     await combos.nth(2).click(); await page.getByRole("option", { name: "Other / not listed", exact: true }).click();
+    await capture("form-01-referral");
+    await page.getByRole("button", { name: "Continue to clinical details", exact: true }).click();
     for (const [label, value] of [["Initials *", "Q.T."], ["Age *", "30"], ["Working diagnosis *", "QA synthetic consult"], ["History *", "Synthetic history"], ["Examination (incl. vitals) *", "Synthetic examination"], ["Investigations *", "Synthetic investigations"], ["Reason for referral / request *", "Synthetic advice request"]]) await page.getByLabel(label, { exact: true }).fill(value);
-    await combos.nth(5).click(); await page.getByRole("option", { name: "Male", exact: true }).click();
-    await page.getByRole("button", { name: /P3 Routine/ }).click();
+    await page.getByRole("combobox", { name: "Sex", exact: true }).click(); await page.getByRole("option", { name: "Male", exact: true }).click();
+    await page.getByRole("button", { name: /P3.*Routine/ }).click();
+    await capture("form-02-clinical");
+    await page.getByRole("button", { name: "Previous", exact: true }).click(); assert.equal(await page.getByLabel("Hospital / facility *", { exact: true }).inputValue(), "QA test facility");
+    await page.getByRole("button", { name: "Continue to clinical details", exact: true }).click(); assert.equal(await page.getByLabel("History *", { exact: true }).inputValue(), "Synthetic history");
+    await page.getByRole("button", { name: "Review referral", exact: true }).click();
+    assert.equal(await page.getByRole("button", { name: "Submit consult", exact: true }).isEnabled(), false);
+    await capture("form-03-review");
     await page.getByRole("checkbox").check();
     await page.getByRole("button", { name: "Submit consult", exact: true }).click();
     await visible(page.getByRole("heading", { name: "Consult sent to MEU" })); await visible(page.getByText("qa-private-code", { exact: true })); await capture("07-referral-receipt");
@@ -82,7 +96,7 @@ try {
     assert.equal(await page.getByLabel("Send an update or follow-up question").inputValue(), ""); await capture("08-own-case-followup");
     await page.getByRole("button", { name: "Close", exact: true }).last().click();
     await page.reload(); await visible(page.getByText("QA synthetic consult", { exact: true }));
-    check("Verified referrer can enter from staff login, submit, receive a private code, read own case, send follow-up and reload");
+    check("Verified referrer can enter from staff login, complete the validated three-step form without losing fields, receive a private code, read own case, send follow-up and reload");
 
     await page.request.post(`${base}/api/fixture/expire`); await page.reload();
     await visible(page.getByRole("heading", { name: "Referring clinician portal" }));
@@ -95,8 +109,43 @@ try {
     await capture("09-pending-verification"); await page.getByRole("button", { name: "Sign out", exact: true }).click();
     check("Pending account can navigate and sign out but cannot submit");
 
+    await go("/portal"); await page.getByRole("button", { name: "Create account", exact: true }).click();
+    for (const [label, value] of [["Full name *", "QA New Referrer"], ["Specialty *", "Emergency Medicine"], ["Email *", "qa-new@example.invalid"], ["Cellphone *", "0700000000"]]) await page.getByLabel(label, { exact: true }).fill(value);
+    assert.equal(await page.getByLabel("Hospital / facility *", { exact: true }).count(), 0);
+    await capture("onboarding-01-profile"); await page.getByRole("button", { name: "Continue to account", exact: true }).click();
+    await page.getByLabel("Username *", { exact: true }).fill("qa_signup"); await page.getByLabel("Password *", { exact: true }).fill("navigation-test-password");
+    await capture("onboarding-02-account"); await page.getByRole("button", { name: "Create account", exact: true }).click();
+    await visible(page.getByText("Verification pending", { exact: true }));
+    await page.getByLabel("Staff card photo", { exact: true }).setInputFiles({ name: "qa-card.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX4sAAAAASUVORK5CYII=", "base64") });
+    await page.getByRole("button", { name: "Send staff card", exact: true }).click(); await visible(page.getByRole("heading", { name: "Card received · review pending", exact: true })); await capture("onboarding-03-card-received");
+    await page.getByRole("button", { name: "Sign out", exact: true }).click();
+    check("Two-stage sign-up reaches verification and staff-card upload clearly reports card received");
+
+    const fixtureLogin = await (await page.request.post(`${base}/api/login`, { data: { username: "referrer", password: "navigation-test-password" } })).json();
+    const fixtureHeaders = { Authorization: `Bearer ${fixtureLogin.token}` };
+    const ownCases = await page.request.get(`${base}/api/referrer/my-referrals`, { headers: fixtureHeaders }); assert(ownCases.ok());
+    const [original] = await ownCases.json();
+    for (const [priority, diagnosis] of [["P1", "QA emergency priority"], ["P2", "QA urgent priority"]]) {
+      const response = await page.request.post(`${base}/api/referrals`, { headers: fixtureHeaders, data: { ...original, consent: true, suggestedPriority: priority, diagnosis } });
+      assert(response.ok(), `Priority fixture creation failed: ${response.status()}`);
+    }
     await login("/login", "admin"); await visible(page.getByRole("heading", { name: "All-unit referral desk" }));
+    await visible(page.getByRole("alertdialog", { name: "P1 referral alert" })); await capture("15-p1-alert");
+    await page.getByRole("button", { name: "Acknowledge and open", exact: true }).click();
+    await page.getByRole("alertdialog", { name: "P1 referral alert" }).waitFor({ state: "hidden" });
+    await page.getByRole("button", { name: "Close", exact: true }).click();
+    const queueCards = page.getByTestId(/^card-referral-/); await visible(queueCards.nth(2));
+    assert.match(await queueCards.nth(0).innerText(), /QA emergency priority/);
+    assert.match(await queueCards.nth(1).innerText(), /QA urgent priority/);
+    check("P1 alert acknowledges and opens its case; P1 then P2 precede newer or updated routine cases in the queue");
+    await capture("13-populated-receiving-queue");
     await page.getByText("QA synthetic consult", { exact: true }).click(); await visible(page.getByTestId("input-advice"));
+    await page.getByRole("tab", { name: "History", exact: true }).click();
+    await page.getByRole("tab", { name: "Images", exact: true }).click();
+    await page.getByRole("tab", { name: "Clinical details", exact: true }).click();
+    const closeControl = await page.getByRole("button", { name: "Close", exact: true }).boundingBox();
+    assert(closeControl && closeControl.y >= 0 && closeControl.y + closeControl.height <= 844, "Case close control stays on screen while its content scrolls");
+    await capture("14-receiving-case");
     await page.getByTestId("input-advice").fill("QA synthetic receiving-team advice");
     await Promise.all([page.waitForResponse(response => response.request().method() === "PATCH" && response.url().includes("/api/referrals/") && response.status() === 200), page.getByTestId("button-send-advice").click()]);
     await page.getByRole("button", { name: "Close", exact: true }).click();

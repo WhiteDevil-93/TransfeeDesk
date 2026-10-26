@@ -14,7 +14,7 @@ const users: any[] = [
   { id: 4, username: "pending", name: "QA Pending Referrer", role: "referrer", team: null, verify_status: "card_pending" },
   { id: 5, username: "temporary", name: "QA First Login", role: "clinician", team: "TEU", must_change: true },
 ].map(u => ({ active: true, must_change: false, phone: "0700000000", specialty: "Emergency Medicine", profession: "doctor", pass_hash: hashPw("navigation-test-password"), ...u }));
-const safe = (u: any) => ({ id: u.id, username: u.username, name: u.name, role: u.role, team: u.team, phone: u.phone, active: u.active, mustChange: u.must_change, specialty: u.specialty, profession: u.profession, verifyStatus: u.verify_status || "none" });
+const safe = (u: any) => ({ id: u.id, username: u.username, name: u.name, role: u.role, team: u.team, phone: u.phone, active: u.active, mustChange: u.must_change, specialty: u.specialty, profession: u.profession, verifyStatus: u.verify_status || "none", hasCard: !!u.card_cipher });
 const tokens = new Map<string, number>();
 const records: any[] = [];
 const updates: any[] = [];
@@ -30,13 +30,14 @@ state.auditList = async () => [];
 state.purgeOlderThan = async () => 0;
 state.users = async () => users.map(safe);
 state.pendingReferrers = async () => [];
+state.attachCard = async (id: number) => { const u = users.find(u => u.id === id); u.card_cipher = "fixture-card"; u.verify_status = "card_pending"; };
 state.list = async (team?: string, referrerId?: number) => records.filter(r => (team === undefined || r.team === team) && (referrerId === undefined || r.referrerId === referrerId));
 state.get = async (id: number) => records.find(r => r.id === id) || null;
 state.create = async (body: any, referrerId: number) => {
   const r = { ...body, id: records.length + 11, ref: `QA-${records.length + 11}`, referrerId, createdAt: new Date().toISOString(), priority: body.suggestedPriority, status: "pending", decisionNote: "", decidedAt: null, ackAt: null, bedStatus: "Not assigned", followupCode: "qa-private-code" };
   records.push(r); return r;
 };
-state.update = async (id: number, patch: any) => { const r = records.find(r => r.id === id); Object.assign(r, patch); return r; };
+state.update = async (id: number, patch: any) => { const r = records.find(r => r.id === id); if (patch.ack && !r.ackAt) Object.assign(r, { ackAt: new Date().toISOString(), ackBy: patch.ack }); const { ack, ...rest } = patch; Object.assign(r, rest); return r; };
 state.timeline = async (id: number) => updates.filter(u => u.referralId === id);
 state.images = async () => [];
 state.append = async (id: number, author: string, _userId: number, kind: string, body: string) => { updates.push({ id: updates.length + 1, referralId: id, author, kind, body, createdAt: new Date().toISOString(), images: [] }); };
@@ -52,8 +53,8 @@ app.get(["/api/roster", "/api/referrer/roster"], (_req, res) => res.json({ specs
 app.get("/api/unit-members", (_req, res) => res.json([]));
 app.get("/api/unit-roster", (_req, res) => res.json({ entries: [] }));
 app.post("/api/fixture/expire", (_req, res) => { tokens.clear(); res.json({ ok: true }); });
-app.post("/api/fixture/reset", (_req, res) => { tokens.clear(); records.length = 0; updates.length = 0; users.splice(5); for (const u of users) { u.pass_hash = hashPw("navigation-test-password"); u.must_change = u.username === "temporary"; } res.json({ ok: true }); });
-app.post("/api/referrer/signup", (req, res) => { users.push({ ...users[3], id: users.length + 1, username: req.body.username, name: req.body.name, pass_hash: hashPw(req.body.password) }); res.json({ autoApproved: false, message: "Upload your staff card before sending." }); });
+app.post("/api/fixture/reset", (_req, res) => { tokens.clear(); records.length = 0; updates.length = 0; users.splice(5); for (const u of users) { u.pass_hash = hashPw("navigation-test-password"); u.must_change = u.username === "temporary"; u.card_cipher = null; } res.json({ ok: true }); });
+app.post("/api/referrer/signup", (req, res) => { users.push({ ...users[3], ...req.body, role: "referrer", id: users.length + 1, card_cipher: null, pass_hash: hashPw(req.body.password) }); res.json({ autoApproved: false, message: "Upload your staff card before sending." }); });
 const server = createServer(app); await registerRoutes(server, app);
 app.use("/api", (_req, res) => res.status(404).json({ message: "Unhandled fixture endpoint" }));
 app.use(express.static(path.resolve("dist/public")));

@@ -105,8 +105,9 @@ fixture. They do not contact Supabase or create patient records.
 - Delivery of notifications, external catchment availability, manual clinical
   decisions and real staff-card review are separate operational checks.
 - Referrer facility and department are still entered on each consult; the current
-  database profile does not persist those two fields. Other saved profile details
-  prefill the form. The UI does not promise complete profile autofill.
+  database profile does not persist those two fields, so signup no longer asks
+  for them. Other saved profile details prefill the form. The UI does not promise
+  complete profile autofill.
 - A complete clinical acceptance test with receiving teams is still required
   before treating the pilot as ready for clinical use.
 
@@ -118,10 +119,13 @@ in-memory database fixture. The browser checks cover wrong-entry sign-in in both
 directions, persistent sessions, cancellation and retry of session restoration,
 expiry, verification gating, referral submission, private receipt, own-case
 updates, receiving-team advice returned to the original referrer, admin access,
-and first-login password change. No browser runtime errors were reported.
+and first-login password change. The UX Pilot implementation adds checks for
+three-step referral validation and preserved fields, two-stage signup, successful
+card-upload feedback, and urgent-first queue ordering. No browser runtime errors
+were reported.
 
 Saved evidence is in `artifacts/navigation-audit/` (ignored by Git): screenshots
-02 through 11 and `checks.json`. API tests additionally prove foreign-case and
+02 through 14, form/onboarding screenshots and `checks.json`. API tests additionally prove foreign-case and
 foreign-image access is refused, referrer viewing does not count as staff
 opening a case, and late failures from a previous account cannot expire a new
 session. TypeScript checks and the production build are required before release.

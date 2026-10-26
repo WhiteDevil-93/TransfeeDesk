@@ -21,7 +21,7 @@ export function verifyPw(pw: string, stored: string) { const [, s, h] = stored.s
 const sha = (t: string) => crypto.createHash("sha256").update(t).digest("hex");
 const IDLE_MIN = 30, ABS_HOURS = 12;
 const userOut = (u: any): User => ({ id: u.id, username: u.username, name: u.name, role: u.role, team:u.team, phone:u.phone || "", active: u.active, mustChange: u.must_change, lastLogin: u.last_login,
-  email: u.email || "", specialty: u.specialty || "", profession: u.profession || null, hpcsaNumber: u.hpcsa_number || "", verifyStatus: u.verify_status || "none" });
+  email: u.email || "", specialty: u.specialty || "", profession: u.profession || null, hpcsaNumber: u.hpcsa_number || "", verifyStatus: u.verify_status || "none", hasCard: !!u.card_cipher });
 function publicReferral(row:any) { const r = toCamel(row); if(r) delete r.portalHash; return r; }
 const imgKey = Buffer.from(crypto.hkdfSync("sha256", process.env.APP_DB_SECRET || "", "transferdesk-images-v1", "private-clinical-images", 32));
 const cardKey = Buffer.from(crypto.hkdfSync("sha256", process.env.APP_DB_SECRET || "", "transferdesk-images-v1", "referrer-staff-cards", 32));
