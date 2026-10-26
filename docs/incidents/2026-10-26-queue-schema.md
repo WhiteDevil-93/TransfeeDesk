@@ -6,12 +6,21 @@ load error. Renderer-b logged `GET /api/referrals 500` and
 admin session reproduced HTTP 500 against the public API; the session was then
 deleted. No patient data or session credentials were written to test evidence.
 
-The hosted database has not received `supabase/migration_referrers.sql`:
+The hosted database had not received `supabase/migration_referrers.sql`:
 zero-row probes also confirmed that `users.email` is missing. Application keys
 can read/write permitted records but cannot apply schema DDL. The local Supabase
 CLI has no administrative access token. The owner has been supplied the exact
 transactional migration to run in the SQL Editor; it adds fields and indexes
 without deleting clinical records or changing row-level policies.
+
+The owner subsequently requested Supabase MCP setup. The project-scoped server
+was registered and OAuth completed in the already signed-in Chrome session.
+The current chat's tool inventory did not reload the new server mid-turn, so
+the existing migration was applied in a separate new Supabase SQL Editor query,
+wrapped in `begin`/`commit` with a PostgREST schema-cache notification. The
+owner's pre-existing SQL query was preserved. Supabase reported
+`Success. No rows returned`; independent server-side zero-row queries then
+confirmed every referrer profile/card field and `referrals.referrer_id`.
 
 ## Immediate repair
 
@@ -41,8 +50,14 @@ five-minute administrator session, loads the real phone queue, navigates to
 Admin and returns to Queue, then deletes the session. It does not change any
 referral or account and does not save clinical screenshots.
 
-The full referrer-account feature still requires the supplied migration to be
-applied and its zero-row column checks to pass. Restoring the staff queue alone
-does not establish signup/card-verification readiness. Future releases must
+After hotfix `05d49bf`, the live authenticated API returned HTTP 200 and two
+existing referrals. A 390 x 844 browser loaded the admin queue, navigated to
+Admin and returned to Queue with zero runtime errors. The temporary session
+was deleted. After the migration, the same live checks passed again and the
+queue-aware health endpoint returned HTTP 200 `ready`. `codex mcp list`
+reported the exact project/feature URL as `enabled` with `OAuth` authentication.
+
+Restoring the staff queue alone does not establish end-to-end signup/card
+verification or clinician acceptance. Future releases must
 check all required migrations and an authenticated read, rather than infer
 database compatibility from public navigation or server-secret health alone.
