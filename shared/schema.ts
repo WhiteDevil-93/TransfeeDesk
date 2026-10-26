@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { TEAMS, type Team, type Role } from "./teams";
+import { latitude, longitude } from "./location";
 export const imageInput = z.object({
   name: z.string().max(100), mime: z.enum(["image/jpeg", "image/png", "image/webp"]),
   data: z.string().max(2800000),
@@ -10,7 +11,7 @@ export const referralInput = z.object({
   doctorName: z.string().min(2), hospital: z.string().min(2), department: z.string().optional().default(""),
   phone: z.string().min(9), email: z.string().optional().default(""),
   specialty: z.string().default(""), currentLocation: z.string().optional().default(""), bedNeeded: z.string().optional().default(""),
-  lat: z.string().regex(/^$|^-?\d{1,3}(\.\d{1,8})?$/).optional().default(""), lon: z.string().regex(/^$|^-?\d{1,3}(\.\d{1,8})?$/).optional().default(""),
+  lat: latitude, lon: longitude,
   patientInitials: z.string().min(1), age: z.string().min(1), sex: z.string().min(1), folderNo: z.string().optional().default(""),
   diagnosis: z.string().min(2), history: z.string().min(5).max(5000), exam: z.string().min(5).max(5000), investigations: z.string().min(2).max(5000),
   reason: z.string().min(2).max(2000), suggestedPriority: z.enum(["P1","P2","P3"]),

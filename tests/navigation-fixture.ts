@@ -50,7 +50,8 @@ state.respond = async (id: number, status: string, decisionNote: string, name: s
   updates.push({ id: updates.length + 1, referralId: id, author: name, kind: status === "advised" ? "advice" : "decision", body: decisionNote, createdAt: new Date().toISOString(), images: [] }); return r;
 };
 const app = express(); app.use(express.json());
-app.use((req, _res, next) => { if (req.method === "POST" && req.path === "/api/referrals") { req.body.lat = "-26.1"; req.body.lon = "27.9"; } next(); });
+app.get("/api/geocode", (_req, res) => res.json([{ name: "QA Test Facility", lat: "-26.1", lon: "27.9", health: true, kind: "hospital" }]));
+app.get("/api/catchment", (_req, res) => res.json({ status: "matched", border: [[-26,27.8],[-26,28],[-26.2,28],[-26.2,27.8]], facilities: [{ name: "QA Referral Centre", location: [-26.12,27.92] }], color: "#0f766e", source: "fixture" }));
 app.get("/api/health", (_req, res) => res.json({ status: "ready", fixture: true }));
 app.get(["/api/roster", "/api/referrer/roster"], (_req, res) => res.json({ specs: [], hospital: "QA Hospital", generated: "fixture" }));
 app.get("/api/unit-members", (_req, res) => res.json([]));

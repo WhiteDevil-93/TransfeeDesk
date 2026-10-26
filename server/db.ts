@@ -153,7 +153,7 @@ export const db = {
     const ref = "TX-" + crypto.randomBytes(8).toString("hex").toUpperCase();
     const code=crypto.randomBytes(16).toString("hex"); const {images,...input}=d;
     const ims=encryptImages(images);
-    const r:any=publicReferral(chk(await sb.from("referrals").insert(toSnake({ ...input, ref, portalHash:sha(code), priority: d.suggestedPriority, referrerId })).select().single()));
+    const r:any=publicReferral(chk(await sb.from("referrals").insert(toSnake({ ...input, ref, portalHash:sha(code), priority: d.suggestedPriority, referrerId, locSource: "Submitted facility location" })).select().single()));
     try { if(ims.length) chk(await sb.from("referral_images").insert(ims.map(im=>({...im,referral_id:r.id})))); }
     catch(e) { await sb.from("referrals").delete().eq("id",r.id); throw e; }
     return {...r, followupCode:code};

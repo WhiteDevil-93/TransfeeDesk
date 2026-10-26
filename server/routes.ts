@@ -3,6 +3,8 @@ import type { Server } from "node:http";
 import fs from "node:fs"; import path from "node:path";
 import { db, verifyPw } from "./db";
 import { geocode } from "./geocode";
+import { catchmentAt } from "./catchment";
+import { facilityLocation } from "../shared/location";
 import { referralInput, decisionInput, followupInput, imageInput } from "@shared/schema";
 import { TEAMS, canAccess, canManage, type Team } from "@shared/teams";
 import { z } from "zod";
@@ -167,6 +169,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (req.user.role !== "referrer" && req.user.role !== "admin") return res.status(403).json({ message: "A referring clinician or global administrator account is required." });
     if (req.user.role === "referrer" && req.user.verifyStatus !== "verified") return res.status(403).json({ message: "Your account must be verified before you can send a referral. Upload your staff card in the referrer portal or contact the BaraBridge admin." });
     if (limit("ref:" + ipOf(req), 20, 3600e3)) return res.status(429).json({ message: "Too many submissions. Please phone the unit." });
+    if (!facilityLocation.safeParse(req.body).success) return res.status(400).json({ message: "A valid referring facility location is required before sending a referral." });
     const p = referralInput.safeParse(req.body);
     if (!p.success || !strOk(p.data)) return res.status(400).json({ message: "Please complete all required fields and confirm the information notice." });
     if(p.data.lat && Math.abs(Number(p.data.lat))>90 || p.data.lon && Math.abs(Number(p.data.lon))>180) return res.status(400).json({message:"Invalid coordinates"});
@@ -177,8 +180,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
     await audit(req, "referral_submitted", r.id, `${r.ref} from ${p.data.hospital} (${req.user.role})`);
     res.json({ ref: r.ref, followupCode:(r as any).followupCode });
-    if (!p.data.lat) geocode(p.data.hospital).then(h => { const f = h.find(x => x.health); if (f) return db.update(r.id, { lat: f.lat, lon: f.lon, locSource: "Auto: " + f.name.slice(0, 150) }); }).catch(() => {});
-    else db.update(r.id, { locSource: "Shared by referring doctor" }).catch(() => {});
   }));
   // Status lookup needs the reference AND the referring cellphone number; returns only coarse status.
   app.post("/api/status", wrap(async (req, res) => {
@@ -406,6 +407,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json({code});
   }));
   app.get("/api/geocode", A, wrap(async (req, res) => { if (limit("geo:" + req.user.id, 30, 60e3)) return res.status(429).json({ message: "Too many lookups" }); res.json(await geocode(String(req.query.q || ""))); }));
+  app.get("/api/catchment", A, wrap(async (req, res) => {
+    const point = facilityLocation.safeParse(req.query);
+    if (!point.success) return res.status(400).json({ message: "Choose a valid facility location" });
+    if (limit("catchment:" + req.user.id, 120, 60e3)) return res.status(429).json({ message: "Too many catchment checks" });
+    try { res.json(await catchmentAt(Number(point.data.lat), Number(point.data.lon))); }
+    catch { res.status(503).json({ message: "Catchment data is unavailable. Try again shortly." }); }
+  }));
   app.get("/api/doctors", A, wrap(async (req, res) => res.json(await db.doctors(scope(req)))));
   app.get("/api/roster", A, (req:AuthReq, res) => {
     if(req.user.role!=="admin") return res.status(403).json({message:"Full hospital roster available to the global administrator only"});

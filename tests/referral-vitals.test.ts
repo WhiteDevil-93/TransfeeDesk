@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { examinationWithVitals, VITAL_FIELDS } from "../client/src/lib/referral-vitals";
 import { referralInput } from "../shared/schema";
 
-const base = { team: "MEU", consultType: "transfer", doctorName: "QA clinician", hospital: "QA facility", phone: "0700000000", patientInitials: "Q.T.", age: "30", sex: "M", diagnosis: "QA diagnosis", history: "Synthetic history", exam: "Synthetic examination", investigations: "Synthetic results", reason: "QA referral", suggestedPriority: "P3", consent: true };
+const base = { team: "MEU", consultType: "transfer", doctorName: "QA clinician", hospital: "QA facility", phone: "0700000000", patientInitials: "Q.T.", age: "30", sex: "M", diagnosis: "QA diagnosis", history: "Synthetic history", exam: "Synthetic examination", investigations: "Synthetic results", reason: "QA referral", suggestedPriority: "P3", consent: true, lat: "-26.1", lon: "27.9" };
 
 test("emergency referrals need no specialty selection or requested bed type", () => {
   for (const team of ["MEU", "TEU", "SEU"]) {

@@ -24,6 +24,7 @@ import { AuthProvider, useAuth, workspaceFor } from "./auth";
 import { TEAMS, TEAM_NAMES } from "@shared/teams";
 import { AccountNotice, AudienceSwitch, BackHome, PriorityPill } from "./components/clinical-ui";
 import "./clinical.css";
+import { CatchmentWindow, CatchmentPage } from "./catchment";
 import { TeamSelect, ReferrerPortal, Timeline, Images, UnitRoster, messageOf } from "./workflows";
 type Me = User;
 
@@ -38,7 +39,7 @@ const sLabel: Record<Status,string> = { pending: "New", accepted: "Accepted for 
 const sColor: Record<Status,string> = { pending: "bg-sky-100 text-sky-900 dark:bg-sky-900 dark:text-sky-100", accepted: "bg-emerald-100 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100", declined: "bg-zinc-200 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200", waiting: "bg-amber-100 text-amber-900 dark:bg-amber-900 dark:text-amber-100", advised:"bg-teal-100 text-teal-900 dark:bg-teal-900 dark:text-teal-100" };
 const ago = (iso: string) => { const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m/60)} h ago` : new Date(iso).toLocaleDateString(); };
 const waNum = (p: string) => { const d = p.replace(/\D/g, ""); return d.startsWith("0") ? "27" + d.slice(1) : d; };
-const catchUrl = (lat: string, lon: string) => `https://catchments.medricsoftware.co.za/?lat=${lat}&lon=${lon}`;
+
 const BEDSTAT = ["Not assigned", "Bed requested", "Bed allocated", "Patient en route", "Arrived"];
 const mins = (iso: string) => (Date.now() - new Date(iso).getTime()) / 60000;
 function isOverdue(r: Referral, st: AlertSettings) {
@@ -259,15 +260,13 @@ function CatchmentBox({ r, onSave }: { r: Referral; onSave: (lat: string, lon: s
   const has = !!(r.lat && r.lon);
   return <div className="border-t pt-2 space-y-2">
     <div className="flex flex-wrap gap-2 items-center"><MapPin className="h-4 w-4 text-muted-foreground" /><span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">EMS catchment</span>
-      {has ? <><a href={catchUrl(r.lat, r.lon)} target="_blank" rel="noreferrer"><Button size="sm" variant="outline" data-testid="button-catchment">Check catchment<ExternalLink className="h-3 w-3 ml-1" /></Button></a>
-        <Button size="sm" variant="ghost" onClick={() => setMap(!map)}>{map ? "Hide map" : "Show map"}</Button><Button size="sm" variant="ghost" onClick={() => { setEdit(!edit); setHits(null); }}>{edit ? "Cancel" : "Change location"}</Button></>
-        : <span className="text-xs text-muted-foreground">No location shared. Look up the facility:</span>}</div>
+      {has ? <><Button type="button" size="sm" variant="outline" data-testid="button-catchment" onClick={() => setMap(true)}>Check catchment</Button><Button type="button" size="sm" variant="ghost" onClick={() => { setEdit(!edit); setHits(null); }}>{edit ? "Cancel" : "Change location"}</Button></>: <span className="text-xs text-muted-foreground">No location shared. Look up the facility:</span>}</div>
     {has && <p className="text-xs text-muted-foreground">{r.locSource || "Location on file"} ({r.lat}, {r.lon})</p>}
     {(!has || edit) && <div className="space-y-2"><form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); find(); }}><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Facility name, e.g. Stretford CHC" data-testid="input-facility" /><Button size="sm" disabled={busy || q.trim().length < 3} data-testid="button-find-facility">{busy ? "Searching..." : "Find"}</Button></form>
-      {hits && hits.length === 0 && <p className="text-xs text-muted-foreground">No match. Try a nearby suburb or town name, or <a className="underline" href="https://catchments.medricsoftware.co.za/" target="_blank" rel="noreferrer">search on the catchment map</a> directly.</p>}
+      {hits && hits.length === 0 && <p className="text-xs text-muted-foreground">No match. Try a more specific facility name or <Button type="button" variant="ghost" className="underline" size="sm" onClick={() => { setEdit(true); setMap(true); }}>choose its point on the map</Button>.</p>}
       {hits && hits.map((h, i) => <div key={i} className="flex gap-2 items-start text-xs border rounded-md p-2"><div className="flex-1"><p>{h.name}</p><p className="text-muted-foreground">{h.health ? "Health facility" : h.kind}</p></div>
         <Button size="sm" variant="outline" className="h-7" onClick={() => { onSave(h.lat, h.lon, "Looked up: " + h.name.slice(0, 150)); setHits(null); setEdit(false); setMap(true); }} data-testid={`button-use-hit-${i}`}>Use</Button></div>)}</div>}
-    {map && has && <iframe title="EMS catchment map" src={catchUrl(r.lat, r.lon)} className="w-full h-72 rounded-md border" />}
+    <CatchmentWindow open={map} onClose={() => setMap(false)} point={has ? { lat: r.lat, lon: r.lon } : undefined} onSelect={!has || edit ? point => { onSave(point.lat, point.lon, "Facility selected on map"); setEdit(false); } : undefined}/>
   </div>;
 }
 
@@ -340,15 +339,7 @@ function OnCall({me}:{me:Me}) {
   </div>;
 }
 
-function Catchments() {
-  const [ll, setLl] = useState<{ lat: string; lon: string } | null>(null); const [err, setErr] = useState("");
-  const here = () => navigator.geolocation?.getCurrentPosition((p) => setLl({ lat: p.coords.latitude.toFixed(6), lon: p.coords.longitude.toFixed(6) }), () => setErr("Location unavailable here; open the map in a new tab instead."));
-  const url = ll ? catchUrl(ll.lat, ll.lon) : "https://catchments.medricsoftware.co.za/";
-  return <div className="space-y-3"><div className="flex flex-wrap gap-2 items-center justify-between"><div><h1 className="text-xl font-semibold">EMS catchments</h1><p className="text-sm text-muted-foreground">Medric EMS catchment and pre-notification map. Referrals with a shared location open here directly.</p></div>
-    <div className="flex gap-2"><Button variant="outline" size="sm" onClick={here}><MapPin className="h-4 w-4 mr-1" />My location</Button><a href={url} target="_blank" rel="noreferrer"><Button size="sm"><ExternalLink className="h-4 w-4 mr-1" />Open full screen</Button></a></div></div>
-    {err && <p className="text-sm text-muted-foreground">{err}</p>}
-    <iframe key={url} title="Medric EMS catchments" src={url} className="w-full h-[70vh] rounded-md border bg-muted" allow="geolocation" /></div>;
-}
+function Catchments() { return <CatchmentPage/>; }
 
 function Doctors() {
   const { data = [], isLoading } = useQuery<Doctor[]>({ queryKey: ["/api/doctors"] }); const [q, setQ] = useState("");
