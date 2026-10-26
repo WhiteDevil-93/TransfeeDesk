@@ -34,7 +34,7 @@ sudo ln -sfn "$target" /opt/transferdesk/current
 if [ ! -e /var/lib/transferdesk/hpcsa_surnames.txt ]; then
   sudo install -m 600 -o transferdesk -g transferdesk script/hpcsa_surnames.txt /var/lib/transferdesk/hpcsa_surnames.txt
 fi
-sudo install -m 644 deploy/transferdesk.service deploy/transferdesk-setup.service /etc/systemd/system/
+sudo install -m 644 deploy/transferdesk.service deploy/transferdesk-setup.service deploy/transferdesk-hpcsa.service deploy/transferdesk-hpcsa.timer /etc/systemd/system/
 sudo cp -n /etc/caddy/Caddyfile "/var/lib/transferdesk/Caddyfile-before-$release"
 sudo install -m 644 deploy/Caddyfile /etc/caddy/Caddyfile
 sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile

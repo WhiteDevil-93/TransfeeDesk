@@ -1,0 +1,21 @@
+[Unit]
+Description=Refresh TransferDesk HPCSA surname checklist
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/var/lib/transferdesk/runtime.env
+
+[Service]
+Type=oneshot
+User=transferdesk
+Group=transferdesk
+WorkingDirectory=/opt/transferdesk/current
+EnvironmentFile=/var/lib/transferdesk/runtime.env
+ExecStart=/opt/transferdesk/node/bin/node dist/hpcsa-scrape.cjs
+TimeoutStartSec=30min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/transferdesk
+MemoryMax=512M
+UMask=0077

@@ -23,4 +23,7 @@ alter table hpcsa_register enable row level security;
 do $$ begin
   create policy app_hpcsa on hpcsa_register for all to anon using (public.is_app_server()) with check (public.is_app_server());
 exception when duplicate_object then null; end $$;
+grant select, insert, update on public.hpcsa_register to anon;
+grant usage, select on sequence public.hpcsa_register_id_seq to anon;
 revoke all on hpcsa_register from authenticated;
+revoke all on sequence public.hpcsa_register_id_seq from authenticated;

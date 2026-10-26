@@ -57,6 +57,17 @@ async function buildAll() {
     external: externals,
     logLevel: "info",
   });
+
+  console.log("building HPCSA refresh worker...");
+  await esbuild({
+    entryPoints: ["script/hpcsa-scrape.ts"],
+    platform: "node",
+    bundle: true,
+    format: "cjs",
+    outfile: "dist/hpcsa-scrape.cjs",
+    external: externals,
+    logLevel: "info",
+  });
 }
 
 buildAll().catch((err) => {
