@@ -23,7 +23,7 @@ export type Referral = Omit<ReferralInput, "team" | "images"> & { team: Team | n
   bedStatus:string; bedWard:string; remindAt:string|null; ackBy:string; ackAt:string|null; referrerId?:number|null };
 export const decisionInput = z.object({ team: z.enum(TEAMS).optional(), status: z.enum(["pending","accepted","declined","waiting","advised"]).optional(), priority: z.enum(["P1","P2","P3"]).optional(),
   decisionNote: z.string().max(5000).optional(), decidedBy: z.string().optional(), bedStatus: z.string().optional(), bedWard: z.string().optional(),
-  remindAt: z.string().nullable().optional(), ack: z.string().optional(),
+  remindAt: z.string().nullable().optional(), ack: z.string().optional(), ackVia: z.enum(["alarm","case"]).optional(),
   lat: z.string().regex(/^-?\d{1,3}(\.\d{1,8})?$/).optional(), lon: z.string().regex(/^-?\d{1,3}(\.\d{1,8})?$/).optional(), locSource: z.string().max(200).optional() });
 export type Doctor = { doctorName:string; hospital:string; department:string; phone:string; email:string; count:number; last:string };
 export type RosterContact = { name:string; role:string; phone:string; hash:string; email:string };

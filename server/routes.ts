@@ -430,7 +430,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if(cur.purgedAt) return res.status(410).json({message:"Clinical record has expired"});
     if(p.data.team && req.user.role!=="admin") return res.status(403).json({message:"Only the global admin can reroute referrals"});
     if(p.data.status==="advised" && !p.data.decisionNote?.trim()) return res.status(400).json({message:"Type the clinical advice before sending"});
-    const d: any = { ...p.data }; if (d.decidedBy !== undefined) d.decidedBy = req.user.name; if (d.ack !== undefined) d.ack = req.user.name;
+    const { ackVia, ...fields } = p.data;
+    const d: any = { ...fields }; if (d.decidedBy !== undefined) d.decidedBy = req.user.name; if (d.ack !== undefined) d.ack = req.user.name;
     if(d.status) d.decidedBy=req.user.name;
     if(d.lat!==undefined && Math.abs(Number(d.lat))>90 || d.lon!==undefined && Math.abs(Number(d.lon))>180) return res.status(400).json({message:"Invalid coordinates"});
     let r;
@@ -440,7 +441,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       r=await db.respond(cur.id,status,decisionNote ?? cur.decisionNote ?? "",req.user.name,req.user.id,remindAt ?? cur.remindAt ?? null);
     } else r=await db.update(cur.id,d);
     if(!r) return res.status(404).end();
-    await audit(req, "update_referral", r.id, Object.keys(d).map(k => `${k}=${k === "decisionNote" ? "(note)" : d[k]}`).join(", "));
+    await audit(req, "update_referral", r.id, Object.keys(d).map(k => `${k}=${k === "decisionNote" ? "(note)" : d[k]}`).join(", ") + (d.ack !== undefined && ackVia ? ` ackVia=${ackVia}` : ""));
     res.json(r);
   }));
   app.post("/api/referrals/:id/shared", A, wrap(async (req, res) => { if(!await findCase(req,res)) return; await audit(req, "shared_whatsapp", Number(req.params.id), "WhatsApp draft opened"); res.json({ ok: true }); }));
