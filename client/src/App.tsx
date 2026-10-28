@@ -15,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { ArrowRight, ChevronRight, Eye, EyeOff, Check, X, Clock, Copy, MessageCircle, Phone, Users, Inbox, Stethoscope, LogOut, Trash2, Search, Bell, BellRing, MapPin, CalendarDays, Siren, BedDouble, AlarmClock, Settings, ExternalLink, Send, ShieldCheck, KeyRound } from "lucide-react";
 import { unlockAudio, sounds, notify, askNotify, canNotify, defaultSettings, type AlertSettings } from "./alerts";
 import type { Referral, Doctor, Status, RosterSpec, RosterContact, User, AuditRow, AppSettings, Followup } from "@shared/schema";
@@ -62,9 +63,9 @@ function StatusPage({ params }: any) {
     try { setData(await (await apiRequest("POST", "/api/status", { ref: ref.trim(), phone })).json()); } catch (x: any) { setErr(String(x.message).startsWith("429") ? "Too many attempts. Please try later or phone the unit." : "No referral matches that reference and cellphone number."); } finally { setBusy(false); } };
   return <Shell public><div className="max-w-md mx-auto space-y-4"><h1 className="text-xl font-semibold">Referral status</h1>
     <p className="text-sm text-muted-foreground">Enter your reference number and the cellphone number you used on the referral.</p>
-    <form className="space-y-2" onSubmit={go}><Input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="TX-XXXXXXX" required data-testid="input-status-ref" /><Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Your cellphone number" required data-testid="input-status-phone" /><Button className="w-full" disabled={busy}>Check status</Button></form>
-    {err && <p className="text-sm text-destructive">{err}</p>}
-    {data && <Card className="p-5 space-y-2"><div className="flex gap-2 items-center"><span className="font-mono font-bold">{data.ref}</span><Badge className={sColor[data.status as Status]}>{sLabel[data.status as Status]}</Badge><span className={`rounded px-2 py-0.5 text-xs font-bold ${pColor[data.priority]}`}>{data.priority}</span></div>
+    <form className="space-y-3" onSubmit={go}><Field label="Reference number"><Input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="TX-XXXXXXX" autoComplete="off" required data-testid="input-status-ref" /></Field><Field label="Cellphone number on the referral"><Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Your cellphone number" autoComplete="tel" required data-testid="input-status-phone" /></Field><Button className="w-full" disabled={busy}>{busy ? "Checking..." : "Check status"}</Button></form>
+    {err && <p role="alert" className="text-sm text-destructive">{err}</p>}
+    {data && <Card role="status" className="p-5 space-y-2"><div className="flex gap-2 items-center"><span className="font-mono font-bold">{data.ref}</span><Badge className={sColor[data.status as Status]}>{sLabel[data.status as Status]}</Badge><span className={`rounded px-2 py-0.5 text-xs font-bold ${pColor[data.priority]}`}>{data.priority}</span></div>
       {data.bedStatus && data.bedStatus !== "Not assigned" && <p className="text-sm"><BedDouble className="inline h-4 w-4 mr-1" />{data.bedStatus}</p>}<p className="text-xs text-muted-foreground">Updated {ago(data.updatedAt)}. Details of the decision are sent to you on WhatsApp.</p></Card>}
   </div></Shell>;
 }
@@ -177,15 +178,19 @@ function useAlerts(me: string, st: AlertSettings) {
 
 function P1Alarm({ list, me, onOpen }: { list: Referral[]; me: string; onOpen: (r: Referral) => void }) {
   const ack = useMutation({ mutationFn: async (id: number) => apiRequest("PATCH", `/api/referrals/${id}`, { ack: me }), onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/referrals"] }) });
-  if (!list.length) return null;
-  return <div className="fixed inset-0 z-50 bg-red-950/70 grid place-items-center p-4" role="alertdialog" aria-label="P1 referral alert">
-    <Card className="w-full max-w-lg p-6 space-y-4 border-red-600 border-2 animate-in zoom-in-95">
-      <div className="flex items-center gap-3 text-red-600"><Siren className="h-8 w-8 animate-pulse" /><div><p className="text-lg font-bold">P1 referral{list.length > 1 ? `s (${list.length})` : ""}</p><p className="text-sm text-muted-foreground">Needs immediate review. Alarm repeats until someone acknowledges.</p></div></div>
-      {list.map(r => <div key={r.id} className="rounded-md border p-3 space-y-2"><p className="font-semibold">{r.diagnosis} <span className="font-normal text-muted-foreground">{r.patientInitials}, {r.age}{r.sex}</span></p>
+  const firstAck = useRef<HTMLButtonElement>(null);
+  return <AlertDialog open={list.length > 0}>
+    <AlertDialogContent aria-modal="true" className="max-w-lg border-2 border-red-600 p-6"
+      onOpenAutoFocus={event => { event.preventDefault(); firstAck.current?.focus(); }}
+      onEscapeKeyDown={event => event.preventDefault()}>
+      <div className="flex items-center gap-3 text-red-600"><Siren className="h-8 w-8 animate-pulse" aria-hidden="true" /><div>
+        <AlertDialogTitle className="text-lg font-bold">P1 referral alert</AlertDialogTitle>
+        <AlertDialogDescription>{list.length > 1 ? `${list.length} P1 referrals need` : "A P1 referral needs"} immediate review. The alarm repeats until someone acknowledges it.</AlertDialogDescription></div></div>
+      {list.map((r, index) => <div key={r.id} className="rounded-md border p-3 space-y-2"><p className="font-semibold">{r.diagnosis} <span className="font-normal text-muted-foreground">{r.patientInitials}, {r.age}{r.sex}</span></p>
         <p className="text-sm text-muted-foreground">Dr {r.doctorName.replace(/^dr\.?\s*/i,"")} · {r.hospital} · {ago(r.createdAt)}</p>
-        <div className="flex gap-2"><Button className="bg-red-600 hover:bg-red-700 text-white flex-1" onClick={() => { ack.mutate(r.id); onOpen(r); }} data-testid={`button-ack-${r.id}`}>Acknowledge and open</Button>
-        <a href={`tel:${r.phone}`}><Button variant="outline"><Phone className="h-4 w-4 mr-1" />Call</Button></a></div></div>)}
-    </Card></div>;
+        <div className="flex gap-2"><Button ref={index === 0 ? firstAck : undefined} className="bg-red-600 hover:bg-red-700 text-white flex-1" onClick={() => { ack.mutate(r.id); onOpen(r); }} data-testid={`button-ack-${r.id}`}>Acknowledge and open</Button>
+        <Button asChild variant="outline"><a href={`tel:${r.phone}`}><Phone className="h-4 w-4 mr-1" aria-hidden="true" />Call</a></Button></div></div>)}
+    </AlertDialogContent></AlertDialog>;
 }
 
 function SettingsSheet({ open, onClose, st, setSt, due, onOpen, admin }: any) {

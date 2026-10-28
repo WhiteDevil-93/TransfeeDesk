@@ -47,6 +47,9 @@ try {
     await page.getByRole("link", { name: "BaraBridge home" }).click(); await visible(page.getByRole("heading", { name: "Welcome to BaraBridge" }));
   }
   check("Public entry, follow-up, status, privacy and unknown pages have recovery navigation");
+  await go("/status"); await visible(page.getByLabel("Reference number", { exact: true })); await visible(page.getByLabel("Cellphone number on the referral", { exact: true }));
+  await go("/followup"); await visible(page.getByLabel("Referral reference", { exact: true })); await visible(page.getByLabel("Private follow-up code", { exact: true }));
+  check("Status and follow-up forms have programmatic labels");
   if (!process.argv.includes("--public-only")) {
     await login("/portal", "staff"); await visible(page.getByRole("heading", { name: "MEU referral desk" }));
     assert.equal(await page.getByTestId("link-Admin").count(), 0);
@@ -178,8 +181,15 @@ try {
       const response = await page.request.post(`${base}/api/referrals`, { headers: fixtureHeaders, data: { ...original, consent: true, suggestedPriority: priority, diagnosis } });
       assert(response.ok(), `Priority fixture creation failed: ${response.status()}`);
     }
-    await login("/login", "admin"); await visible(page.getByRole("heading", { name: "All-unit referral desk" }));
+    await login("/login", "admin");
     await visible(page.getByRole("alertdialog", { name: "P1 referral alert" })); await capture("15-p1-alert");
+    assert.equal(await page.getByRole("heading", { name: "All-unit referral desk" }).count(), 0, "while the alarm is open the page behind it is hidden from assistive technology");
+    const alarm = page.getByRole("alertdialog", { name: "P1 referral alert" });
+    assert.equal(await alarm.getAttribute("aria-modal") ?? await alarm.evaluate(node => node.closest("[aria-modal]") ? "true" : null), "true", "the alarm is a modal dialog");
+    assert.equal(await page.evaluate(() => document.activeElement?.textContent), "Acknowledge and open", "focus starts on the acknowledge button");
+    assert.equal(await alarm.locator("a button, button a").count(), 0, "no interactive element is nested inside another");
+    for (let i = 0; i < 6; i++) { await page.keyboard.press("Tab"); assert.equal(await page.evaluate(() => Boolean(document.activeElement?.closest('[role="alertdialog"]'))), true, "Tab stays inside the alarm"); }
+    await page.keyboard.press("Escape"); assert.equal(await alarm.count(), 1, "Escape does not dismiss an unacknowledged P1");
     await page.getByRole("button", { name: "Acknowledge and open", exact: true }).click();
     await page.getByRole("alertdialog", { name: "P1 referral alert" }).waitFor({ state: "hidden" });
     await page.getByRole("button", { name: "Close", exact: true }).click();
