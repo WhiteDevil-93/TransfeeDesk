@@ -55,6 +55,26 @@ export function encryptImages(images:any[]) {
 
 export const REFERRAL_QUEUE_COLUMNS = "id,ref,team,consult_type,opened_at,opened_by,latest_followup_at,followup_seen_at,created_at,doctor_name,hospital,department,phone,specialty,current_location,bed_needed,patient_initials,age,sex,diagnosis,reason,suggested_priority,priority,status,decided_by,decided_at,bed_status,bed_ward,remind_at,ack_by,ack_at,purged_at,lat,lon,loc_source";
 
+const AUDIT_QUEUE_MAX = 500;
+const auditQueue: Record<string, unknown>[] = [];
+let auditDropped = 0, auditFlusher: ReturnType<typeof setInterval> | undefined;
+export const auditStatus = () => ({ queued: auditQueue.length, dropped: auditDropped });
+async function insertAudit(row: Record<string, unknown>) {
+  try { const r = await sb.from("audit_log").insert(row); if (r.error) { console.error("audit failed", r.error.message); return false; } return true; }
+  catch (e: any) { console.error("audit failed", e?.message); return false; }
+}
+export async function flushAuditQueue() {
+  while (auditQueue.length) { if (!(await insertAudit(auditQueue[0]))) return; auditQueue.shift(); }
+}
+function ensureAuditFlusher() {
+  if (auditFlusher) return;
+  auditFlusher = setInterval(async () => {
+    await flushAuditQueue();
+    if (!auditQueue.length && auditFlusher) { clearInterval(auditFlusher); auditFlusher = undefined; }
+  }, 30_000);
+  auditFlusher.unref?.();
+}
+
 export const db = {
   /* users */
   async userByName(username: string) { return chk(await sb.from("users").select("*").eq("username", username.toLowerCase().trim()).maybeSingle()) as any; },
@@ -236,9 +256,16 @@ export const db = {
   },
 
   /* audit */
+  // A failed audit write is retried once straight away, then held in memory and
+  // retried (in order) until it lands. The queue is bounded and lost on restart,
+  // so /api/health reports it and operators can alert on a non-empty backlog.
   async audit(e: { userId?: number | null; userName?: string; action: string; referralId?: number | null; detail?: string; ip?: string }) {
-    const r = await sb.from("audit_log").insert({ user_id: e.userId ?? null, user_name: e.userName || "", action: e.action, referral_id: e.referralId ?? null, detail: (e.detail || "").slice(0, 500), ip: e.ip || "" });
-    if (r.error) console.error("audit failed", r.error.message);
+    const row = { user_id: e.userId ?? null, user_name: e.userName || "", action: e.action, referral_id: e.referralId ?? null, detail: (e.detail || "").slice(0, 500), ip: e.ip || "" };
+    if (auditQueue.length) await flushAuditQueue();
+    if (!auditQueue.length && (await insertAudit(row) || await insertAudit(row))) return;
+    console.error("audit write failed; queued for retry");
+    if (auditQueue.length >= AUDIT_QUEUE_MAX) { auditQueue.shift(); auditDropped++; }
+    auditQueue.push(row); ensureAuditFlusher();
   },
   async auditList(opts: { referralId?: number; limit?: number }): Promise<AuditRow[]> {
     let q = sb.from("audit_log").select("*").order("at", { ascending: false }).limit(opts.limit || 300);

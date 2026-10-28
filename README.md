@@ -115,21 +115,32 @@ Technical access controls do not establish POPIA compliance. Production still ne
 
 Rate limits for sign-in, sign-up, status lookup, the follow-up portal and submissions are held in the API process's memory. They assume one API process on one host: a restart resets them and each additional process multiplies the allowance. Add proxy-level or shared-store limits before running more than one instance. Account lockout after five failed sign-ins is stored in the database and is not affected.
 
+Audit-log writes that fail are retried and held in a bounded in-memory queue (500 entries, lost if the process restarts). `/api/health` reports `audit.state` as `degraded`, with the queued and dropped counts, whenever that backlog is not empty or an entry has ever been dropped; alert on it. Case reads and changes are not blocked while the audit log is unavailable.
+
 Only the dependency versions locked in this archive were checked during export. Dependencies, policies and clinical workflows require ongoing review.
 
-## Dependency audit (audited 14 October 2026)
+## Dependency audit (audited 28 October 2026)
 
-`npm audit` on the locked tree reports 5 high-severity advisories, all a single
-underlying bug: `braces` (stack-exhaustion denial of service,
-[CVE-2026-93687](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)), inherited by
-Tailwind's build-time dependencies (`chokidar`, `micromatch`, `fast-glob`,
-`tailwindcss`). This affects the local build toolchain only — it is not present in
-the production server or the shipped client bundle. At the time of audit no patched
-`braces` release exists, so it is carried as an accepted, build-time-only risk.
-`package.json` pins `braces` via `overrides`, so a future patched release is picked
-up automatically on the next install.
+Re-run `npm audit` after every dependency change and replace this section with
+its actual output.
 
-Also applied on this date: `recharts` upgraded to v3 (the 2.x line is deprecated),
-and `postcss-selector-parser` overridden to `^7.1.6`, which cleared the three
-moderate advisories it previously carried. Typecheck, unit/access tests and the
-production build were re-verified green after these changes.
+- `npm audit --omit=dev` (what ships to the server): **0 vulnerabilities**.
+- `npm audit` (including build tools): **4 low-severity**, one underlying issue.
+  `deepmerge` (prototype poisoning in `mergeObject()`,
+  [GHSA-gcqx-w48m-w2h4](https://github.com/advisories/GHSA-gcqx-w48m-w2h4)) is
+  reached through `vite-plugin-pwa` → `workbox-build` → `@rollup/plugin-node-resolve`.
+  It runs only while the service worker is generated at build time, on trusted
+  input, and is not in the server or the client bundle. The latest published
+  `deepmerge` (4.3.1) is inside the affected range, and the only suggested "fix" (`npm audit fix --force`) installs
+  `vite-plugin-pwa@0.2.1`, a major downgrade, so it is carried as an accepted
+  build-time-only risk.
+
+Fixed on this date by `npm audit fix` within the existing semver ranges: `zod`
+4.6.5 → 4.6.7 (memory exhaustion on oversized collections), `express`'s
+`body-parser` 2.3.0 → 2.4.0 (compressed-body DoS), `qs` 6.16.0 → 6.17.0,
+`fast-uri` 3.1.8 → 3.1.9, `vite` 7.3.6 → 7.3.7 and `serialize-javascript`
+7.1.2 → 7.1.4. The earlier `braces` advisory no longer appears. The unused
+`drizzle-kit` dev dependency and the `db:push` script were removed: this project
+has no Drizzle configuration, and the schema is managed by the SQL files in
+`supabase/`. Typecheck, the unit tests and the production build pass on the
+updated tree, and a clean `npm ci` installs it.

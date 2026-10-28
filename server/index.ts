@@ -6,6 +6,7 @@ import { serveStatic } from "./static";
 import { createServer } from "node:http";
 import { runBulkExport } from "../script/hpcsa-scrape";
 import { databaseReady } from "./readiness";
+import { auditStatus } from "./db";
 
 const app = express();
 const httpServer = createServer(app);
@@ -74,7 +75,8 @@ app.use((req, res, next) => {
   app.get("/api/health", async (_req, res) => {
     try {
       const ready = await databaseReady();
-      res.status(ready ? 200 : 503).json({ status: ready ? "ready" : "unavailable" });
+      const audit = auditStatus();
+      res.status(ready ? 200 : 503).json({ status: ready ? "ready" : "unavailable", audit: audit.queued || audit.dropped ? { state: "degraded", ...audit } : { state: "ok" } });
     } catch {
       res.status(503).json({ status: "unavailable" });
     }
