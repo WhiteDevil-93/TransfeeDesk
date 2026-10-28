@@ -25,13 +25,5 @@ create index if not exists audit_at_idx on audit_log(at desc);
 create table if not exists settings (k text primary key, v jsonb not null);
 alter table users enable row level security; alter table sessions enable row level security;
 alter table referrals enable row level security; alter table audit_log enable row level security; alter table settings enable row level security;
--- The anon key is held only by the server (never sent to browsers).
-do $$ begin
-  create policy srv_users on users for all to anon using (true) with check (true);
-  create policy srv_sessions on sessions for all to anon using (true) with check (true);
-  create policy srv_referrals on referrals for all to anon using (true) with check (true);
-  create policy srv_settings on settings for all to anon using (true) with check (true);
-  -- audit log is append-only: insert + select, no update/delete
-  create policy srv_audit_ins on audit_log for insert to anon with check (true);
-  create policy srv_audit_sel on audit_log for select to anon using (true);
-exception when duplicate_object then null; end $$;
+-- No policies are created here: with RLS on, every table denies the API roles
+-- until migration_lockdown.sql adds the x-app-secret policies.

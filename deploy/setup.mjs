@@ -24,6 +24,16 @@ async function database(path, secret, method = "GET") {
   return response.json();
 }
 
+// True when clinical tables return rows to a caller without the server secret,
+// e.g. migration_lockdown.sql was skipped or the legacy open policies remain.
+async function readableWithoutSecret() {
+  for (const table of ["users", "referrals", "sessions"]) {
+    const response = await fetch(`${dbUrl}/rest/v1/${table}?select=id&limit=1`, { headers: { apikey: key }, signal: AbortSignal.timeout(15000) });
+    if (response.ok && (await response.json()).length) return true;
+  }
+  return false;
+}
+
 const html = await readFile(new URL("setup.html", import.meta.url), "utf8");
 const server = http.createServer(async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
@@ -58,6 +68,7 @@ const server = http.createServer(async (req, res) => {
       const { secret } = JSON.parse(raw);
       if (typeof secret !== "string" || secret.length < 32 || secret.length > 2048 || /[\r\n\0]/.test(secret)) return reply(400, "Enter the original APP_DB_SECRET (at least 32 characters).");
       if (await database("rpc/is_app_server", "", "POST") !== false) return reply(409, "Database access policy needs review; nothing saved.");
+      if (await readableWithoutSecret()) return reply(409, "Clinical tables are readable without the server secret. Apply supabase/migration_lockdown.sql before activating; nothing saved.");
       if (await database("rpc/is_app_server", secret, "POST") !== true) return reply(401, "This secret does not unlock the existing database. Nothing changed.");
       // Read only ciphertext for one existing image. Never return image contents.
       const images = await database("referral_images?select=cipher,iv,tag&limit=1", secret);
