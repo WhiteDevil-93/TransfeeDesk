@@ -45,6 +45,8 @@ state.create = async (body: any, referrerId: number) => {
   records.push(r); return r;
 };
 state.update = async (id: number, patch: any) => { const r = records.find(r => r.id === id); if (patch.ack && !r.ackAt) Object.assign(r, { ackAt: new Date().toISOString(), ackBy: patch.ack }); const { ack, ...rest } = patch; Object.assign(r, rest); return r; };
+state.portalLogin = async (ref: string, code: string) => { const r = records.find(r => r.ref === ref.trim().toUpperCase() && r.followupCode === code); return r ? { referral: r, portalHash: "fixture-portal-hash" } : null; };
+state.portalById = async (id: number) => { const r = records.find(r => r.id === id); return r ? { referral: r, portalHash: "fixture-portal-hash" } : null; };
 state.timeline = async (id: number) => updates.filter(u => u.referralId === id);
 state.images = async () => [];
 state.append = async (id: number, author: string, _userId: number, kind: string, body: string) => { updates.push({ id: updates.length + 1, referralId: id, author, kind, body, createdAt: new Date().toISOString(), images: [] }); };

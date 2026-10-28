@@ -15,8 +15,9 @@
 
 Referrer accounts are verified only by the global administrator. A matching
 name and number in the public HPCSA register marks the account "HPCSA register
-match" in the verification queue but does not verify it on its own. Once
-verified, the referrer's name and HPCSA number are locked, and referrals take
+match" in the verification queue but does not verify it on its own. A
+verified referrer who changes their name or HPCSA number goes back into that
+queue until the administrator confirms the new identity, and referrals take
 the referring doctor's name, cellphone and email from the account rather than
 the submitted form.
 

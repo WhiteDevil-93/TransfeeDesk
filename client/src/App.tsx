@@ -15,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { ArrowRight, ChevronRight, Eye, EyeOff, Check, X, Clock, Copy, MessageCircle, Phone, Users, Inbox, Stethoscope, LogOut, Trash2, Search, Bell, BellRing, MapPin, CalendarDays, Siren, BedDouble, AlarmClock, Settings, ExternalLink, Send, ShieldCheck, KeyRound } from "lucide-react";
 import { unlockAudio, sounds, notify, askNotify, canNotify, defaultSettings, type AlertSettings } from "./alerts";
 import type { Referral, Doctor, Status, RosterSpec, RosterContact, User, AuditRow, AppSettings, Followup } from "@shared/schema";
@@ -25,7 +26,11 @@ import { TEAMS, TEAM_NAMES } from "@shared/teams";
 import { AccountNotice, AudienceSwitch, BackHome, PriorityPill } from "./components/clinical-ui";
 import "./clinical.css";
 import { CatchmentWindow, CatchmentPage } from "./catchment";
-import { TeamSelect, ReferrerPortal, Timeline, Images, UnitRoster, messageOf } from "./workflows";
+import { TeamSelect, ReferrerPortal, Timeline, Images, UnitRoster, QuestionBox, AwaitingReply, messageOf } from "./workflows";
+import { PushToggle } from "./push";
+import { openedNotice, updateNotice } from "./lib/referrer-notice";
+import { resolveDetail } from "./lib/referral-detail";
+import { copyText, useAutoClear } from "./lib/use-auto-clear";
 type Me = User;
 
 const Logo = () => (
@@ -59,9 +64,9 @@ function StatusPage({ params }: any) {
     try { setData(await (await apiRequest("POST", "/api/status", { ref: ref.trim(), phone })).json()); } catch (x: any) { setErr(String(x.message).startsWith("429") ? "Too many attempts. Please try later or phone the unit." : "No referral matches that reference and cellphone number."); } finally { setBusy(false); } };
   return <Shell public><div className="max-w-md mx-auto space-y-4"><h1 className="text-xl font-semibold">Referral status</h1>
     <p className="text-sm text-muted-foreground">Enter your reference number and the cellphone number you used on the referral.</p>
-    <form className="space-y-2" onSubmit={go}><Input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="TX-XXXXXXX" required data-testid="input-status-ref" /><Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Your cellphone number" required data-testid="input-status-phone" /><Button className="w-full" disabled={busy}>Check status</Button></form>
-    {err && <p className="text-sm text-destructive">{err}</p>}
-    {data && <Card className="p-5 space-y-2"><div className="flex gap-2 items-center"><span className="font-mono font-bold">{data.ref}</span><Badge className={sColor[data.status as Status]}>{sLabel[data.status as Status]}</Badge><span className={`rounded px-2 py-0.5 text-xs font-bold ${pColor[data.priority]}`}>{data.priority}</span></div>
+    <form className="space-y-3" onSubmit={go}><Field label="Reference number"><Input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="TX-XXXXXXX" autoComplete="off" required data-testid="input-status-ref" /></Field><Field label="Cellphone number on the referral"><Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Your cellphone number" autoComplete="tel" required data-testid="input-status-phone" /></Field><Button className="w-full" disabled={busy}>{busy ? "Checking..." : "Check status"}</Button></form>
+    {err && <p role="alert" className="text-sm text-destructive">{err}</p>}
+    {data && <Card role="status" className="p-5 space-y-2"><div className="flex gap-2 items-center"><span className="font-mono font-bold">{data.ref}</span><Badge className={sColor[data.status as Status]}>{sLabel[data.status as Status]}</Badge><span className={`rounded px-2 py-0.5 text-xs font-bold ${pColor[data.priority]}`}>{data.priority}</span></div>
       {data.bedStatus && data.bedStatus !== "Not assigned" && <p className="text-sm"><BedDouble className="inline h-4 w-4 mr-1" />{data.bedStatus}</p>}<p className="text-xs text-muted-foreground">Updated {ago(data.updatedAt)}. Details of the decision are sent to you on WhatsApp.</p></Card>}
   </div></Shell>;
 }
@@ -173,31 +178,43 @@ function useAlerts(me: string, st: AlertSettings) {
 }
 
 function P1Alarm({ list, me, onOpen }: { list: Referral[]; me: string; onOpen: (r: Referral) => void }) {
-  const ack = useMutation({ mutationFn: async (id: number) => apiRequest("PATCH", `/api/referrals/${id}`, { ack: me }), onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/referrals"] }) });
-  if (!list.length) return null;
-  return <div className="fixed inset-0 z-50 bg-red-950/70 grid place-items-center p-4" role="alertdialog" aria-label="P1 referral alert">
-    <Card className="w-full max-w-lg p-6 space-y-4 border-red-600 border-2 animate-in zoom-in-95">
-      <div className="flex items-center gap-3 text-red-600"><Siren className="h-8 w-8 animate-pulse" /><div><p className="text-lg font-bold">P1 referral{list.length > 1 ? `s (${list.length})` : ""}</p><p className="text-sm text-muted-foreground">Needs immediate review. Alarm repeats until someone acknowledges.</p></div></div>
-      {list.map(r => <div key={r.id} className="rounded-md border p-3 space-y-2"><p className="font-semibold">{r.diagnosis} <span className="font-normal text-muted-foreground">{r.patientInitials}, {r.age}{r.sex}</span></p>
+  const ack = useMutation({ mutationFn: async (id: number) => apiRequest("PATCH", `/api/referrals/${id}`, { ack: me, ackVia: "alarm" }), onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/referrals"] }) });
+  const firstAck = useRef<HTMLButtonElement>(null);
+  return <AlertDialog open={list.length > 0}>
+    <AlertDialogContent aria-modal="true" className="max-w-lg border-2 border-red-600 p-6"
+      onOpenAutoFocus={event => { event.preventDefault(); firstAck.current?.focus(); }}
+      onEscapeKeyDown={event => event.preventDefault()}>
+      <div className="flex items-center gap-3 text-red-600"><Siren className="h-8 w-8 animate-pulse" aria-hidden="true" /><div>
+        <AlertDialogTitle className="text-lg font-bold">P1 referral alert</AlertDialogTitle>
+        <AlertDialogDescription>{list.length > 1 ? `${list.length} P1 referrals need` : "A P1 referral needs"} immediate review. The alarm repeats until someone acknowledges it.</AlertDialogDescription></div></div>
+      {list.map((r, index) => <div key={r.id} className="rounded-md border p-3 space-y-2"><p className="font-semibold">{r.diagnosis} <span className="font-normal text-muted-foreground">{r.patientInitials}, {r.age}{r.sex}</span></p>
         <p className="text-sm text-muted-foreground">Dr {r.doctorName.replace(/^dr\.?\s*/i,"")} · {r.hospital} · {ago(r.createdAt)}</p>
-        <div className="flex gap-2"><Button className="bg-red-600 hover:bg-red-700 text-white flex-1" onClick={() => { ack.mutate(r.id); onOpen(r); }} data-testid={`button-ack-${r.id}`}>Acknowledge and open</Button>
-        <a href={`tel:${r.phone}`}><Button variant="outline"><Phone className="h-4 w-4 mr-1" />Call</Button></a></div></div>)}
-    </Card></div>;
+        <div className="flex gap-2"><Button ref={index === 0 ? firstAck : undefined} className="bg-red-600 hover:bg-red-700 text-white flex-1" onClick={() => { ack.mutate(r.id); onOpen(r); }} data-testid={`button-ack-${r.id}`}>Acknowledge and open</Button>
+        <Button asChild variant="outline"><a href={`tel:${r.phone}`}><Phone className="h-4 w-4 mr-1" aria-hidden="true" />Call</a></Button></div></div>)}
+    </AlertDialogContent></AlertDialog>;
 }
 
 function SettingsSheet({ open, onClose, st, setSt, due, onOpen, admin }: any) {
-  const set = (k: keyof AlertSettings) => (e: any) => { const v = { ...st, [k]: k === "sound" ? !st.sound : Math.max(1, Number(e.target.value) || 1) }; if (k !== "sound" && !admin) return; setSt(v); if (admin) apiRequest("PUT", "/api/settings", v).catch(() => {}); };
+  const { toast } = useToast();
+  const set = (k: keyof AlertSettings) => (e: any) => {
+    const v = { ...st, [k]: k === "sound" ? !st.sound : Math.max(1, Number(e.target.value) || 1) };
+    if (k !== "sound" && !admin) return;
+    const previous = st; setSt(v);
+    if (admin) apiRequest("PUT", "/api/settings", v).catch(error => { setSt(previous); toast({ title: "Alert settings were not saved", description: `${messageOf(error)} The previous values are back in place.`, variant: "destructive" }); });
+  };
   const perm = canNotify() ? Notification.permission : "unsupported";
   return <Sheet open={open} onOpenChange={(o) => !o && onClose()}><SheetContent className="w-full sm:max-w-md overflow-y-auto"><SheetHeader><SheetTitle>Alerts and reminders</SheetTitle></SheetHeader>
     <div className="space-y-5 mt-4">
       <div className="space-y-2"><p className="text-sm font-semibold">Needs attention ({due.length})</p>
-        {due.length === 0 ? <p className="text-sm text-muted-foreground">Nothing overdue.</p> : due.map((r: Referral) => <button key={r.id} onClick={() => { onClose(); onOpen(r); }} className="w-full text-left rounded-md border p-2 hover-elevate flex gap-2 items-center"><span className={`rounded px-1.5 py-0.5 text-xs font-bold ${pColor[r.priority]}`}>{r.priority}</span><span className="text-sm flex-1 truncate">{r.diagnosis} · {r.hospital}</span><span className="text-xs text-muted-foreground">{r.status === "waiting" ? "reminder" : ago(r.createdAt)}</span></button>)}</div>
+        {due.length === 0 ? <p className="text-sm text-muted-foreground">Nothing overdue.</p> : due.map((r: Referral) => <button key={r.id} onClick={() => { onClose(); onOpen(r); }} className="w-full min-h-11 text-left rounded-md border p-2 hover-elevate flex gap-2 items-center"><span className={`rounded px-1.5 py-0.5 text-xs font-bold ${pColor[r.priority]}`}>{r.priority}</span><span className="text-sm flex-1 truncate">{r.diagnosis} · {r.hospital}</span><span className="text-xs text-muted-foreground">{r.status === "waiting" ? "reminder" : ago(r.createdAt)}</span></button>)}</div>
       <div className="space-y-3 border-t pt-4"><p className="text-xs text-muted-foreground">These thresholds are shared by the whole team{admin ? "" : " and can be changed by an admin"}.</p><p className="text-sm font-semibold">Remind me if a new consult is not actioned within (minutes)</p>
         <div className="grid grid-cols-3 gap-2">{(["p1","p2","p3"] as const).map(k => <Field key={k} label={k.toUpperCase()}><Input type="number" min={1} value={st[k]} onChange={set(k)} disabled={!admin} /></Field>)}</div>
         <Field label="Repeat reminders every (minutes)"><Input type="number" min={1} value={st.repeat} onChange={set("repeat")} disabled={!admin} /></Field>
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={st.sound} onChange={set("sound")} /> Play sounds</label>
+        <Field label="Push the whole unit if nothing has been actioned within (minutes)" hint="Whoever is rostered for today is notified straight away. If a new referral is still unopened, or a follow-up unread, after this long, every active member of the unit is notified. The same applies to the referrer when a question has not been answered."><Input type="number" min={1} value={st.escalate} onChange={set("escalate")} disabled={!admin} /></Field>
+        <label className="flex min-h-11 items-center gap-2 text-sm"><input type="checkbox" checked={st.sound} onChange={set("sound")} /> Play sounds</label>
         <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => { unlockAudio(); sounds.alarm(); }}>Test P1 alarm</Button><Button size="sm" variant="outline" onClick={() => { unlockAudio(); sounds.reminder(); }}>Test reminder</Button></div>
-        <p className="text-xs text-muted-foreground">Browser notifications: {perm}. {perm !== "granted" && perm !== "unsupported" && <button className="underline" onClick={() => askNotify()}>Enable</button>} Alerts work while this dashboard is open on a phone or computer; keep one device signed in on the on-call desk.</p>
+        <div className="space-y-1 border-t pt-3"><p className="text-sm font-semibold">Push notifications</p><p className="text-xs text-muted-foreground">Reach this account on this phone or computer even when BaraBridge is closed. Turn it on for each device you carry on call. Signing out turns it off for the device.</p><PushToggle target={{kind:"account"}} /></div>
+        <p className="text-xs text-muted-foreground">Browser notifications: {perm}. {perm !== "granted" && perm !== "unsupported" && <button className="inline-flex min-h-11 items-center px-2 underline" onClick={() => askNotify()}>Enable</button>} Alerts work while this dashboard is open on a phone or computer; keep one device signed in on the on-call desk.</p>
       </div></div></SheetContent></Sheet>;
 }
 
@@ -207,7 +224,7 @@ function Queue({ me, data, st, onOpen, user }: { me: string; data: Referral[]; s
   const isLoading = false; const { data: specs } = useSpecs();
   const [tab, setTab] = useState("open"); const [q, setQ] = useState(""); const [sp, setSp] = useState("all"); const [unit,setUnit]=useState(user.team||"all"); const { toast } = useToast();
   const hasUpdate=(r:Referral)=>!!r.latestFollowupAt && (!r.followupSeenAt || r.latestFollowupAt>r.followupSeenAt);
-  const list = useMemo(() => data.filter(r=>unit==="all"||r.team===unit).filter(r => tab==="all" || (tab==="open" ? ["pending","waiting"].includes(r.status)||hasUpdate(r) : r.status===tab))
+  const list = useMemo(() => data.filter(r=>unit==="all"||r.team===unit).filter(r => tab==="all" || (tab==="open" ? ["pending","waiting"].includes(r.status)||hasUpdate(r)||!!r.awaitingInfoAt : r.status===tab))
     .filter(r => sp === "all" || r.specialty === sp)
     .filter(r => !q || JSON.stringify(r).toLowerCase().includes(q.toLowerCase()))
     .sort((a,b) => pr[a.priority]-pr[b.priority] || Number(hasUpdate(b))-Number(hasUpdate(a)) || order[a.status]-order[b.status] || a.createdAt.localeCompare(b.createdAt)), [data, tab, q, sp,unit]);
@@ -231,7 +248,7 @@ function Queue({ me, data, st, onOpen, user }: { me: string; data: Referral[]; s
       <div className="flex flex-wrap items-center justify-between gap-2"><PriorityPill priority={r.priority}/><span className="font-mono text-xs text-muted-foreground">{r.ref}</span></div>
       <div className="mt-4 flex flex-wrap justify-between items-center gap-3"><p className="bb-patient-initials">{r.patientInitials}<span className="ml-2 text-sm font-normal text-muted-foreground">{r.age} · {r.sex}</span></p><Badge className={sColor[r.status]}>{sLabel[r.status]}</Badge></div>
       <p className="mt-3 text-base font-semibold leading-relaxed">{r.diagnosis}</p><p className="mt-1 text-sm leading-relaxed text-muted-foreground">From {r.hospital} · Dr {r.doctorName.replace(/^dr\.?\s*/i,"")}</p>
-      <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-3"><Badge variant="outline">{r.team||"Unassigned"}</Badge>{hasUpdate(r)&&<Badge className="bg-sky-700 text-white">New follow-up</Badge>}{r.consultType==="advice"&&<Badge variant="outline">Advice only</Badge>}{r.bedStatus && r.bedStatus !== "Not assigned" && <Badge variant="outline">{r.bedStatus}{r.bedWard && ` · ${r.bedWard}`}</Badge>}{od && <Badge className="bg-amber-50 text-amber-900 border border-amber-200">Overdue</Badge>}<span className="ml-auto text-xs text-muted-foreground">{ago(r.createdAt)}</span></div>
+      <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-3"><Badge variant="outline">{r.team||"Unassigned"}</Badge>{hasUpdate(r)&&<Badge className="bg-sky-700 text-white">New follow-up</Badge>}{r.awaitingInfoAt&&<Badge className="bg-amber-100 text-amber-900 border border-amber-300">Waiting for referrer</Badge>}{r.consultType==="advice"&&<Badge variant="outline">Advice only</Badge>}{r.bedStatus && r.bedStatus !== "Not assigned" && <Badge variant="outline">{r.bedStatus}{r.bedWard && ` · ${r.bedWard}`}</Badge>}{od && <Badge className="bg-amber-50 text-amber-900 border border-amber-200">Overdue</Badge>}<span className="ml-auto text-xs text-muted-foreground">{ago(r.createdAt)}</span></div>
     </button>; })}</div>}
   </div>;
 }
@@ -253,74 +270,73 @@ function OnCallBox({ spec, msg, onShare, show }: { spec: string; msg: string; on
       s.entries.map((e, i) => <div key={i} className="text-sm"><span className="text-muted-foreground">{e.role}: </span><span className="font-medium">{e.text}</span>{e.contacts.map((c, j) => <div key={j} className="mt-1"><ContactBtns c={c} msg={msg} named={e.contacts.length > 1} onShare={onShare} /></div>)}</div>)}</Card>;
 }
 
-function CatchmentBox({ r, onSave }: { r: Referral; onSave: (lat: string, lon: string, src: string) => void }) {
+function CatchmentBox({ r, onSave, editable }: { r: Referral; onSave: (lat: string, lon: string, src: string) => void; editable: boolean }) {
   const [q, setQ] = useState(r.hospital || ""); const [hits, setHits] = useState<any[] | null>(null); const [busy, setBusy] = useState(false); const [map, setMap] = useState(false); const [edit, setEdit] = useState(false);
   useEffect(() => { setQ(r.hospital || ""); setHits(null); setMap(false); setEdit(false); }, [r.id]);
   const find = async () => { setBusy(true); try { setHits(await (await apiRequest("GET", `/api/geocode?q=${encodeURIComponent(q)}`)).json()); } catch { setHits([]); } finally { setBusy(false); } };
   const has = !!(r.lat && r.lon);
   return <div className="border-t pt-2 space-y-2">
     <div className="flex flex-wrap gap-2 items-center"><MapPin className="h-4 w-4 text-muted-foreground" /><span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">EMS catchment</span>
-      {has ? <><Button type="button" size="sm" variant="outline" data-testid="button-catchment" onClick={() => setMap(true)}>Check catchment</Button><Button type="button" size="sm" variant="ghost" onClick={() => { setEdit(!edit); setHits(null); }}>{edit ? "Cancel" : "Change location"}</Button></>: <span className="text-xs text-muted-foreground">No location shared. Look up the facility:</span>}</div>
+      {has ? <><Button type="button" size="sm" variant="outline" data-testid="button-catchment" onClick={() => setMap(true)}>Check catchment</Button>{editable && <Button type="button" size="sm" variant="ghost" onClick={() => { setEdit(!edit); setHits(null); }}>{edit ? "Cancel" : "Change location"}</Button>}</>: <span className="text-xs text-muted-foreground">No location shared.{editable ? " Look up the facility:" : ""}</span>}</div>
     {has && <p className="text-xs text-muted-foreground">{r.locSource || "Location on file"} ({r.lat}, {r.lon})</p>}
-    {(!has || edit) && <div className="space-y-2"><form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); find(); }}><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Facility name, e.g. Stretford CHC" data-testid="input-facility" /><Button size="sm" disabled={busy || q.trim().length < 3} data-testid="button-find-facility">{busy ? "Searching..." : "Find"}</Button></form>
+    {(!has || edit) && editable && <div className="space-y-2"><form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); find(); }}><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Facility name, e.g. Stretford CHC" data-testid="input-facility" /><Button size="sm" disabled={busy || q.trim().length < 3} data-testid="button-find-facility">{busy ? "Searching..." : "Find"}</Button></form>
       {hits && hits.length === 0 && <p className="text-xs text-muted-foreground">No match. Try a more specific facility name or <Button type="button" variant="ghost" className="underline" size="sm" onClick={() => { setEdit(true); setMap(true); }}>choose its point on the map</Button>.</p>}
       {hits && hits.map((h, i) => <div key={i} className="flex gap-2 items-start text-xs border rounded-md p-2"><div className="flex-1"><p>{h.name}</p><p className="text-muted-foreground">{h.health ? "Health facility" : h.kind}</p></div>
         <Button size="sm" variant="outline" className="h-7" onClick={() => { onSave(h.lat, h.lon, "Looked up: " + h.name.slice(0, 150)); setHits(null); setEdit(false); setMap(true); }} data-testid={`button-use-hit-${i}`}>Use</Button></div>)}</div>}
-    <CatchmentWindow open={map} onClose={() => setMap(false)} point={has ? { lat: r.lat, lon: r.lon } : undefined} onSelect={!has || edit ? point => { onSave(point.lat, point.lon, "Facility selected on map"); setEdit(false); } : undefined}/>
+    <CatchmentWindow open={map} onClose={() => setMap(false)} point={has ? { lat: r.lat, lon: r.lon } : undefined} onSelect={editable && (!has || edit) ? point => { onSave(point.lat, point.lon, "Facility selected on map"); setEdit(false); } : undefined}/>
   </div>;
 }
 
 function Detail({ r: lite, me, onClose, user }: { r: Referral|null; me: string; onClose: () => void; user:Me }) {
-  const { data: full, error:loadError } = useQuery<Referral & {timeline:Followup[]}>({ queryKey: [`/api/referrals/${lite?.id}`], enabled: !!lite, staleTime: 0, refetchInterval:15000 });
-  const r = lite ? (full && full.id === lite.id ? { ...full, ...lite, history: full.history, exam: full.exam, investigations: full.investigations, decisionNote: full.decisionNote, folderNo: full.folderNo, email: full.email } as Referral : lite) : null;
+  const { data: full, error:loadError, refetch: reload, isFetching } = useQuery<Referral & {timeline:Followup[]; images?: any[]}>({ queryKey: [`/api/referrals/${lite?.id}`], enabled: !!lite, staleTime: 0, refetchInterval:15000 });
+  const { r, ready } = resolveDetail<Referral, Referral & {timeline:Followup[]; images?: any[]}>(lite, full, !!loadError);
   const [note, setNote] = useState(""); const [ward, setWard] = useState<string|null>(null); const [map, setMap] = useState(false); const { toast } = useToast(); const { data: specs } = useSpecs();
   const m = useMutation({ mutationFn: async (u: any) => (await apiRequest("PATCH", `/api/referrals/${r!.id}`, u)).json(), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/referrals"] }); queryClient.invalidateQueries({ queryKey: [`/api/referrals/${lite?.id}`] }); },onError:e=>toast({title:messageOf(e),variant:"destructive"}) });
   const [portalCode,setPortalCode]=useState("");
   const [caseTab, setCaseTab] = useState("clinical");
-  useEffect(() => { setWard(null); setMap(false); }, [r?.id]);
-  useEffect(() => { if (r && r.priority === "P1" && !r.ackAt) m.mutate({ ack: me }); }, [r?.id]);
+  const afterQuestion = () => { queryClient.invalidateQueries({ queryKey: ["/api/referrals"] }); queryClient.invalidateQueries({ queryKey: [`/api/referrals/${lite?.id}`] }); };
+  const askMore = () => { setCaseTab("history"); setTimeout(() => document.getElementById("chat-question")?.focus(), 50); };
+  useEffect(() => { setWard(null); setMap(false); setPortalCode(""); }, [r?.id]);
+  useAutoClear(portalCode, () => setPortalCode(""), 60_000);
   if (!r) return null;
+  const locked = !ready || m.isPending;
   const dr = r.doctorName.replace(/^dr\.?\s*/i,"");
-  const bedTxt = r.bedStatus === "Bed allocated" || r.bedStatus === "Patient en route" ? ` Bed: ${r.bedWard || "allocated"}.` : r.bedStatus === "Bed requested" ? " A bed has been requested; we will confirm when allocated." : "";
-  const msg = (s: Status) => {
-    // WhatsApp is outside BaraBridge's controls: name the reference only, keep clinical detail in the portal.
-    const base = `Dear Dr ${dr}, re: your BaraBridge referral ${r.ref}.`;
-    const body = s==="accepted" ? ` The patient has been ACCEPTED by ${r.team}.${bedTxt} Please confirm transfer arrangements with the unit.` : s==="declined" ? " Unfortunately we are unable to accept this referral at this time." : s==="waiting" ? " This referral is on our WAITING list." : s==="advised" ? " Clinical advice is available in your secure follow-up portal. This is not an acceptance for transfer." : "";
-    return `${base}${body}${s!=="advised" && (note || r.decisionNote) ? " A note from the team is in your secure follow-up portal." : ""} - ${me}`;
-  };
   const fwd = `BaraBridge: ${r.priority} ${specName(specs, r.specialty)} consult ${r.ref} from ${r.hospital} needs your review. Please sign in to BaraBridge to see the details: ${window.location.href.split("#")[0]} - ${me}`;
   const logShare = (to: string) => apiRequest("POST", `/api/referrals/${r.id}/shared`, { to }).catch(() => {});
-  const decide = (s: Status) => { m.mutate({ status: s, decisionNote: note || r.decisionNote, decidedBy: me, ...(s === "waiting" && !r.remindAt ? { remindAt: new Date(Date.now() + 30 * 60000).toISOString() } : {}) },{onSuccess:()=>{toast({title:sLabel[s],description:"Saved to the referral and secure portal. Tap WhatsApp to notify the referrer."});setNote("");}}); };
+  const decide = (s: Status) => { m.mutate({ status: s, decisionNote: note || r.decisionNote, decidedBy: me, ...(s === "waiting" && !r.remindAt ? { remindAt: new Date(Date.now() + 30 * 60000).toISOString() } : {}) },{onSuccess:()=>{toast({title:sLabel[s],description:"Saved to the referral and secure portal. Tap WhatsApp to tell the referrer an update is waiting."});setNote("");}}); };
   const remind = (mn: number) => { m.mutate({ remindAt: new Date(Date.now() + mn * 60000).toISOString(), ...(r.status === "pending" ? { status: "waiting", decidedBy: me } : {}) }); toast({ title: `Reminder in ${mn >= 60 ? mn / 60 + " h" : mn + " min"}` }); };
   const Sec = ({ t, v }: any) => <div><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t}</p><p className="text-sm whitespace-pre-wrap">{v || "-"}</p></div>;
   return <Sheet open onOpenChange={(o) => { if (!o) { setNote(""); onClose(); } }}><SheetContent className="w-full sm:max-w-xl flex flex-col overflow-hidden p-0"><SheetHeader className="shrink-0 border-b p-6 pb-4"><SheetTitle className="flex items-center gap-2 pr-12"><span className={`rounded px-2 py-0.5 text-xs font-bold ${pColor[r.priority]}`}>{r.priority}</span>{r.diagnosis}</SheetTitle></SheetHeader>
     <div className="min-h-0 flex-1 overflow-y-auto space-y-5 px-6 pb-6 pt-4">
-      {loadError&&<p role="alert" className="text-sm text-destructive">Could not load this referral. Your unit access may have changed.</p>}
+      {loadError ? <div role="alert" className="space-y-2 rounded-md border border-destructive p-3 text-sm text-destructive"><p>Could not load this referral. Your unit access may have changed. Decisions and changes are disabled until the full record loads.</p><Button size="sm" variant="outline" disabled={isFetching} onClick={() => reload()}>Try again</Button></div>
+        : !ready && <p role="status" className="text-sm text-muted-foreground">Loading the full referral. Decisions are available once history, examination and investigations have loaded.</p>}
+      {r.priority === "P1" && !r.ackAt && <div role="alert" className="flex flex-wrap items-center gap-3 rounded-md border-2 border-red-600 bg-red-50 p-3 dark:bg-red-950"><p className="flex-1 text-sm font-semibold text-red-800 dark:text-red-200">Unacknowledged P1. The alarm repeats until you acknowledge it.</p><Button className="bg-red-600 hover:bg-red-700 text-white" disabled={m.isPending} onClick={() => m.mutate({ ack: me, ackVia: "case" })} data-testid="button-ack-detail">Acknowledge P1</Button></div>}
       <div className="bb-case-banner space-y-3"><div className="flex flex-wrap justify-between gap-3"><p className="bb-patient-initials">{r.patientInitials}<span className="ml-2 text-sm font-normal text-teal-100">{r.age} · {r.sex}</span></p><span className="text-sm font-semibold">{r.team || "Unassigned"}</span></div><p className="text-sm text-teal-100">{r.ref} · {r.consultType === "advice" ? "Advice-only request" : "Transfer request"}</p><p className="border-t border-white/20 pt-3 font-semibold">{sLabel[r.status]}</p></div>
-      {user.role==="admin"&&<Field label="Receiving unit (global admin routing)"><TeamSelect value={r.team||""} onChange={team=>m.mutate({team})}/></Field>}
+      {user.role==="admin"&&<Field label="Receiving unit (global admin routing)"><TeamSelect value={r.team||""} onChange={team=>m.mutate({team})} disabled={locked}/></Field>}
       <div className="flex flex-wrap gap-2 items-center text-sm"><Badge className={sColor[r.status]}>{sLabel[r.status]}</Badge><span className="font-mono">{r.ref}</span><span className="text-muted-foreground">{new Date(r.createdAt).toLocaleString()}</span>{r.ackBy && <span className="text-xs text-muted-foreground">Seen by {r.ackBy}</span>}</div>
       <p className="text-xs text-muted-foreground">{r.team||"Unassigned"} · {r.consultType==="advice"?"Advice-only consult":"Transfer request"}{r.openedBy?` · First opened by ${r.openedBy}`:""}</p>
-      <Tabs value={caseTab} onValueChange={setCaseTab}><TabsList className="w-full" aria-label="Referral information"><TabsTrigger value="clinical">Clinical details</TabsTrigger><TabsTrigger value="history">History</TabsTrigger><TabsTrigger value="images">Images{full?.images?.length ? ` (${full.images.length})` : ""}</TabsTrigger></TabsList>
+      <Tabs value={caseTab} onValueChange={setCaseTab}><TabsList className="w-full" aria-label="Referral information"><TabsTrigger value="clinical">Clinical details</TabsTrigger><TabsTrigger value="history">History &amp; chat</TabsTrigger><TabsTrigger value="images">Images{full?.images?.length ? ` (${full.images.length})` : ""}</TabsTrigger></TabsList>
       <TabsContent value="clinical" className="space-y-5"><Card className="p-4 text-sm space-y-3"><p className="font-medium">Dr {dr}, {r.hospital}{r.department && ` (${r.department})`}</p>
         <div className="flex flex-wrap gap-2"><a href={`tel:${r.phone}`}><Button size="sm" variant="outline"><Phone className="h-4 w-4 mr-1" />{r.phone}</Button></a>{r.email && <a href={`mailto:${r.email}`} className="text-sm underline self-center">{r.email}</a>}
         </div>
-        <CatchmentBox r={r} onSave={(lat, lon, src) => m.mutate({ lat, lon, locSource: src })} /></Card>
+        <CatchmentBox r={r} editable={ready} onSave={(lat, lon, src) => m.mutate({ lat, lon, locSource: src })} /></Card>
       <div className="grid grid-cols-3 gap-3 text-sm">{r.specialty && <Sec t="Specialty" v={specName(specs, r.specialty)} />}<Sec t="Patient in" v={r.currentLocation} />{r.bedNeeded && <Sec t="Bed needed" v={r.bedNeeded} />}
         <Sec t="Patient" v={`${r.patientInitials}, ${r.age} ${r.sex}`} /><Sec t="Folder" v={r.folderNo} /><Sec t="Suggested" v={r.suggestedPriority} /></div>
       <Sec t="History" v={r.history} /><Sec t="Examination" v={r.exam} /><Sec t="Investigations" v={r.investigations} /><Sec t="Request" v={r.reason} /></TabsContent>
       <TabsContent value="images" className="space-y-3"><h3 className="font-semibold">Clinical images</h3>{!full?.images?.length && <p className="text-sm text-muted-foreground">No initial referral images. Images attached to updates are in History.</p>}<Images images={full?.images} referralId={r.id}/></TabsContent>
-      <TabsContent value="history" className="space-y-3"><h3 className="font-semibold text-sm">Updates and response history</h3><Timeline entries={full?.timeline} referralId={r.id}/>{!full?.timeline?.length && <p className="text-sm text-muted-foreground">No updates recorded yet.</p>}</TabsContent></Tabs>
+      <TabsContent value="history" className="space-y-3"><h3 className="font-semibold text-sm">Updates, questions and response history</h3>{r.awaitingInfoAt&&<AwaitingReply staff since={r.awaitingInfoAt} team={r.team}/>}<Timeline entries={full?.timeline} referralId={r.id}/>{!full?.timeline?.length && <p className="text-sm text-muted-foreground">No updates recorded yet.</p>}<QuestionBox referralId={r.id} disabled={locked||!!r.purgedAt} onSent={afterQuestion}/></TabsContent></Tabs>
+      {r.awaitingInfoAt&&<div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-400 bg-amber-50 p-3 text-sm text-amber-950" data-testid="banner-awaiting"><span className="flex-1">Waiting for the referrer to reply to your question ({ago(r.awaitingInfoAt)}).</span><Button size="sm" variant="outline" onClick={()=>setCaseTab("history")}>View chat</Button></div>}
       <OnCallBox spec={r.specialty} msg={fwd} onShare={logShare} show={user.role==="admin"} />
-      <div className="border-t pt-4 space-y-3"><div className="flex items-center gap-3"><Label className="w-16">Priority</Label><div className="flex gap-1">{(["P1","P2","P3"] as const).map(p => <Button key={p} size="sm" variant={r.priority===p?"default":"outline"} onClick={() => m.mutate({ priority: p })} data-testid={`button-set-${p}`}>{p}</Button>)}</div></div>
-        <div className="flex flex-wrap items-center gap-2"><Label className="w-16">Bed</Label><Select value={r.bedStatus || "Not assigned"} onValueChange={(v) => m.mutate({ bedStatus: v })}><SelectTrigger className="w-44" data-testid="select-bedstatus"><SelectValue /></SelectTrigger><SelectContent>{BEDSTAT.map(b => <SelectItem key={b} value={b}>{b}</SelectItem>)}</SelectContent></Select>
-          <Input className="flex-1 min-w-[140px]" placeholder="Ward / bed no." value={ward ?? r.bedWard ?? ""} onChange={(e) => setWard(e.target.value)} onBlur={() => ward !== null && m.mutate({ bedWard: ward })} data-testid="input-bedward" /></div>
+      <div className="border-t pt-4 space-y-3"><div className="flex items-center gap-3"><Label className="w-16">Priority</Label><div className="flex gap-1">{(["P1","P2","P3"] as const).map(p => <Button key={p} size="sm" variant={r.priority===p?"default":"outline"} disabled={locked} onClick={() => { if (p === "P1" && r.priority !== "P1" && !window.confirm(`Escalate ${r.ref} to P1? The P1 alarm sounds for the whole unit until someone acknowledges it.`)) return; m.mutate({ priority: p }); }} data-testid={`button-set-${p}`}>{p}</Button>)}</div></div>
+        <div className="flex flex-wrap items-center gap-2"><Label className="w-16">Bed</Label><Select value={r.bedStatus || "Not assigned"} onValueChange={(v) => m.mutate({ bedStatus: v })} disabled={locked}><SelectTrigger className="w-44" data-testid="select-bedstatus"><SelectValue /></SelectTrigger><SelectContent>{BEDSTAT.map(b => <SelectItem key={b} value={b}>{b}</SelectItem>)}</SelectContent></Select>
+          <Input className="flex-1 min-w-[140px]" placeholder="Ward / bed no." value={ward ?? r.bedWard ?? ""} disabled={!ready} onChange={(e) => setWard(e.target.value)} onBlur={() => ward !== null && ready && m.mutate({ bedWard: ward })} data-testid="input-bedward" /></div>
         <div className="rounded-xl border border-primary/25 bg-accent/50 p-4 space-y-3"><Field label="Clinical advice / note to referring doctor"><Textarea rows={4} maxLength={5000} value={note} onChange={(e) => setNote(e.target.value)} placeholder={r.decisionNote || "Type clinical advice, treatment plan or transfer instructions"} data-testid="input-advice" /></Field><p className="text-xs leading-relaxed text-muted-foreground">Choose a decision below. Advice alone does not accept a transfer.</p></div>
-        <div className="grid grid-cols-2 gap-3"><Button disabled={m.isPending} onClick={() => decide("accepted")} className="bg-emerald-700 hover:bg-emerald-800 text-white" data-testid="button-accept"><Check/>Accept transfer</Button><Button variant="outline" disabled={m.isPending||!note.trim()} onClick={()=>decide("advised")} className="border-primary text-primary" data-testid="button-send-advice"><MessageCircle/>Advice only</Button><Button variant="outline" disabled={m.isPending} onClick={() => decide("waiting")} className="text-amber-900 border-amber-300 bg-amber-50" data-testid="button-wait"><Clock/>Wait / hold</Button><Button variant="destructive" disabled={m.isPending} onClick={() => decide("declined")} data-testid="button-decline"><X/>Decline</Button></div>
-        {(r.status === "pending" || r.status === "waiting") && <div className="flex flex-wrap items-center gap-1.5"><AlarmClock className="h-4 w-4 text-muted-foreground" /><span className="text-sm text-muted-foreground mr-1">Remind me in</span>{[15, 30, 60, 120].map(mn => <Button key={mn} size="sm" variant="outline" className="h-7 px-2" onClick={() => remind(mn)}>{mn >= 60 ? mn / 60 + "h" : mn + "m"}</Button>)}
+        <div className="grid grid-cols-2 gap-3"><Button disabled={locked} onClick={() => decide("accepted")} className="bg-emerald-700 hover:bg-emerald-800 text-white" data-testid="button-accept"><Check/>Accept transfer</Button><Button variant="outline" disabled={locked||!note.trim()} onClick={()=>decide("advised")} className="border-primary text-primary" data-testid="button-send-advice"><MessageCircle/>Advice only</Button><Button variant="outline" disabled={locked} onClick={askMore} className="col-span-2" data-testid="button-ask-info"><MessageCircle/>Ask the referrer for more information</Button><Button variant="outline" disabled={locked} onClick={() => decide("waiting")} className="text-amber-900 border-amber-300 bg-amber-50" data-testid="button-wait"><Clock/>Wait / hold</Button><Button variant="destructive" disabled={locked} onClick={() => decide("declined")} data-testid="button-decline"><X/>Decline</Button></div>
+        {(r.status === "pending" || r.status === "waiting") && <div className="flex flex-wrap items-center gap-1.5"><AlarmClock className="h-4 w-4 text-muted-foreground" /><span className="text-sm text-muted-foreground mr-1">Remind me in</span>{[15, 30, 60, 120].map(mn => <Button key={mn} size="sm" variant="outline" className="h-7 px-2" disabled={locked} onClick={() => remind(mn)}>{mn >= 60 ? mn / 60 + "h" : mn + "m"}</Button>)}
           {r.remindAt && <span className="text-xs text-muted-foreground">Set for {new Date(r.remindAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>}</div>}
-        {r.status!=="pending" && <a href={`https://wa.me/${waNum(r.phone)}?text=${encodeURIComponent(msg(r.status))}`} target="_blank" rel="noreferrer" onClick={() => logShare(`referring doctor ${r.phone}`)}><Button variant="secondary" className="w-full" data-testid="button-notify"><MessageCircle className="h-4 w-4 mr-1" />Notify Dr {dr} on WhatsApp</Button></a>}
-        <a href={`https://wa.me/${waNum(r.phone)}?text=${encodeURIComponent(`Your referral ${r.ref} has been opened by the ${r.team||"receiving"} team. This is an opened receipt, not acceptance for transfer. Please use your secure portal for updates.`)}`} target="_blank" rel="noreferrer" onClick={()=>logShare("opened receipt")}><Button variant="outline" className="w-full">WhatsApp: referral opened</Button></a>
-        {user.role!=="clinician"&&<div className="border rounded p-3 space-y-2"><p className="text-xs text-muted-foreground">Legacy referral or lost code? Verify the referring doctor's identity before resetting portal access.</p><Button size="sm" variant="outline" onClick={async()=>{try{const d=await(await apiRequest("POST",`/api/referrals/${r.id}/portal-reset`)).json();setPortalCode(d.code);}catch(e){toast({title:messageOf(e),variant:"destructive"});}}}>Generate new private follow-up code</Button>{portalCode&&<p className="font-mono text-xs break-all select-all">{portalCode}</p>}</div>}
+        {ready && r.status!=="pending" && <a href={`https://wa.me/${waNum(r.phone)}?text=${encodeURIComponent(updateNotice({ doctor: dr, ref: r.ref, sender: me }))}`} target="_blank" rel="noreferrer" onClick={() => logShare(`referring doctor ${r.phone}`)}><Button variant="secondary" className="w-full" data-testid="button-notify"><MessageCircle className="h-4 w-4 mr-1" />Notify Dr {dr} on WhatsApp</Button></a>}
+        {ready && <a href={`https://wa.me/${waNum(r.phone)}?text=${encodeURIComponent(openedNotice({ ref: r.ref, team: r.team }))}`} target="_blank" rel="noreferrer" onClick={()=>logShare("opened receipt")}><Button variant="outline" className="w-full">WhatsApp: referral opened</Button></a>}
+        {user.role!=="clinician"&&<div className="border rounded p-3 space-y-2"><p className="text-xs text-muted-foreground">Legacy referral or lost code? Verify the referring doctor's identity before resetting portal access.</p><Button size="sm" variant="outline" disabled={!ready} onClick={async()=>{try{const d=await(await apiRequest("POST",`/api/referrals/${r.id}/portal-reset`)).json();setPortalCode(d.code);}catch(e){toast({title:messageOf(e),variant:"destructive"});}}}>Generate new private follow-up code</Button>{portalCode&&<div role="status" className="space-y-2"><p className="font-mono text-xs break-all select-all">{portalCode}</p><div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={async()=>{if(await copyText(portalCode)){toast({title:"Code copied and hidden"});setPortalCode("");}else toast({title:"Couldn't copy. Select the code and copy it.",variant:"destructive"});}}>Copy and hide</Button><Button size="sm" variant="ghost" onClick={()=>setPortalCode("")}>Hide</Button></div><p className="text-xs text-muted-foreground">Give this to the referring doctor privately. It hides itself after a minute and cannot be shown again.</p></div>}</div>}
         {r.decidedBy && <p className="text-xs text-muted-foreground">Last update by {r.decidedBy}{r.decidedAt && `, ${ago(r.decidedAt)}`}</p>}
       </div><Button variant="outline" className="w-full" onClick={onClose}>Back to referral queue</Button></div></SheetContent></Sheet>;
 }

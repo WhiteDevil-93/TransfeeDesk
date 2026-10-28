@@ -24,7 +24,7 @@ const people: any[] = [
   { id: 1, role: "admin", team: null },
   { id: 4, role: "clinician", team: "MEU" },
   { id: 5, role: "unit_admin", team: null },
-  { id: 7, role: "referrer", team: null, verifyStatus: "verified", hpcsaNumber: "MP0123456" },
+  { id: 7, role: "referrer", team: null, name: "Jane Smith", verifyStatus: "verified", hpcsaNumber: "MP0123456" },
   { id: 8, role: "referrer", team: null, verifyStatus: "card_pending" },
   { id: 9, role: "referrer", team: null, verifyStatus: "hpcsa" },
 ].map(u => ({ active: true, name: `Person ${u.id}`, username: `p${u.id}`, phone: `08200000${u.id}`, mustChange: false, ...u }));
@@ -93,7 +93,7 @@ test("changing a password ends the account's other sessions", async t => {
   } finally { await close(); }
 });
 
-test("referrer verification: register matches need an admin, verified identity is locked, cards are validated", async t => {
+test("referrer verification: register matches need an admin, identity changes are re-checked, cards are validated", async t => {
   const added: any[] = [], marked: number[] = [];
   t.mock.method(db, "sessionUser", async (token: string) => people.find(u => String(u.id) === token) || null);
   t.mock.method(db, "audit", async () => {});
@@ -102,6 +102,9 @@ test("referrer verification: register matches need an admin, verified identity i
   t.mock.method(db, "addReferrer", async (b: any) => { added.push(b); return { id: 30, username: b.username } as any; });
   t.mock.method(db, "updateReferrer", async () => people[4]);
   t.mock.method(db, "markHpcsaMatched", async (id: number) => { marked.push(id); });
+  const demoted: number[] = [];
+  t.mock.method(db, "demoteReferrer", async (id: number) => { demoted.push(id); });
+  t.mock.method(db, "emailTaken", async () => false);
   t.mock.method(db, "approveReferrer", async (id: number) => id === 8);
   t.mock.method(db, "rejectReferrer", async (id: number) => id === 8);
   const { request, close } = await serve((() => { const app = express(); app.use(express.json()); return app; })());
@@ -113,9 +116,10 @@ test("referrer verification: register matches need an admin, verified identity i
     assert.equal(body.hpcsaMatched, true);
     assert.equal(added[0].verifyStatus, "hpcsa", "a public-register match is flagged, never verified");
     assert.equal(added[0].hospital, "QA Hospital");
-    assert.equal((await request("7", "/api/referrer/profile", "POST", { name: "Someone Else" })).status, 409);
-    assert.equal((await request("7", "/api/referrer/profile", "POST", { hpcsa: "MP9999999" })).status, 409);
-    assert.equal((await request("7", "/api/referrer/profile", "POST", { hpcsa: "mp 0123456", phone: "0720000000" })).status, 200, "same number, reformatted, is not a change");
+    assert.equal((await (await request("7", "/api/referrer/profile", "POST", { hpcsa: "mp 0123456", phone: "0720000000" })).json()).reverify, undefined, "same number, reformatted, is not a change");
+    assert.deepEqual(demoted, []);
+    assert.equal((await (await request("7", "/api/referrer/profile", "POST", { hpcsa: "MP9999999" })).json()).reverify, true, "a verified referrer who changes number is re-verified by an admin");
+    assert.deepEqual(demoted, [7]);
     const png = { name: "card.png", mime: "image/png", data: Buffer.from("not really a png").toString("base64") };
     assert.equal((await request("7", "/api/referrer/card", "POST", { image: png })).status, 409, "verified accounts are not downgraded by a card upload");
     const bad = await request("8", "/api/referrer/card", "POST", { image: png });

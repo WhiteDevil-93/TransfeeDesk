@@ -11,14 +11,20 @@ fi
 sudo install -d -m 755 /opt/transferdesk/releases
 sudo install -d -m 700 -o transferdesk -g transferdesk /var/lib/transferdesk
 node_version=v24.22.1
+case "$(uname -m)" in
+  aarch64|arm64) node_arch=arm64 ;;
+  x86_64|amd64) node_arch=x64 ;;
+  *) echo "Unsupported CPU architecture: $(uname -m)" >&2; exit 2 ;;
+esac
+node_dist="node-$node_version-linux-$node_arch"
 if [ ! -x "/opt/transferdesk/node-$node_version/bin/node" ]; then
   stage=$(mktemp -d /tmp/transferdesk-node.XXXXXX)
-  trap 'rm -f "$stage/node-'"$node_version"'-linux-arm64.tar.xz" "$stage/SHASUMS256.txt"; rmdir "$stage"' EXIT
-  curl -fsSL "https://nodejs.org/dist/$node_version/node-$node_version-linux-arm64.tar.xz" -o "$stage/node-$node_version-linux-arm64.tar.xz"
+  trap 'rm -f "$stage/$node_dist.tar.xz" "$stage/SHASUMS256.txt"; rmdir "$stage"' EXIT
+  curl -fsSL "https://nodejs.org/dist/$node_version/$node_dist.tar.xz" -o "$stage/$node_dist.tar.xz"
   curl -fsSL "https://nodejs.org/dist/$node_version/SHASUMS256.txt" -o "$stage/SHASUMS256.txt"
-  (cd "$stage" && grep " node-$node_version-linux-arm64.tar.xz$" SHASUMS256.txt | sha256sum -c -)
-  sudo tar -xJf "$stage/node-$node_version-linux-arm64.tar.xz" -C /opt/transferdesk
-  sudo mv "/opt/transferdesk/node-$node_version-linux-arm64" "/opt/transferdesk/node-$node_version"
+  (cd "$stage" && grep " $node_dist.tar.xz$" SHASUMS256.txt | sha256sum -c -)
+  sudo tar -xJf "$stage/$node_dist.tar.xz" -C /opt/transferdesk
+  sudo mv "/opt/transferdesk/$node_dist" "/opt/transferdesk/node-$node_version"
 fi
 sudo ln -sfn "/opt/transferdesk/node-$node_version" /opt/transferdesk/node
 target="/opt/transferdesk/releases/$release"

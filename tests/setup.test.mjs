@@ -18,9 +18,13 @@ test("credential handoff rejects unauthorized attempts and preserves existing im
   const cipher = crypto.createCipheriv("aes-256-gcm", imageKey, iv);
   const encrypted = Buffer.concat([cipher.update(Buffer.from("synthetic image, no clinical data")), cipher.final()]);
   let invalidImage = false;
+  let openPolicies = false;
   let writes = 0;
   const upstream = http.createServer((req, res) => {
     res.setHeader("Content-Type", "application/json");
+    if (req.method === "GET" && /^\/rest\/v1\/(users|referrals|sessions)\?/.test(req.url) && !req.headers["x-app-secret"]) {
+      return res.end(JSON.stringify(openPolicies ? [{ id: 1 }] : []));
+    }
     if (req.url === "/rest/v1/rpc/is_app_server" && req.method === "POST") {
       return res.end(JSON.stringify(req.headers["x-app-secret"] === secret));
     }
@@ -49,6 +53,10 @@ test("credential handoff rejects unauthorized attempts and preserves existing im
     assert.equal((await submit(secret, { Origin: "https://attacker.invalid" })).status, 403);
     assert.equal((await submit("incorrect-secret-value-longer-than-32-characters")).status, 401);
     await assert.rejects(access(envPath));
+    openPolicies = true;
+    assert.equal((await submit(secret)).status, 409, "an unlocked database must never receive credentials");
+    await assert.rejects(access(envPath));
+    openPolicies = false;
     invalidImage = true;
     assert.equal((await submit(secret)).status, 502);
     await assert.rejects(access(envPath));

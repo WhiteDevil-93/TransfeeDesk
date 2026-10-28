@@ -1,15 +1,18 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import type { Server } from "node:http";
 import fs from "node:fs"; import path from "node:path";
-import { db, hashPw, verifyPw, verifyPwOrDummy } from "./db";
+import { db, hashPw, verifyPw, verifyPwOrDummy, isUniqueViolation } from "./db";
 import { geocode } from "./geocode";
 import { catchmentAt } from "./catchment";
 import { facilityLocation } from "../shared/location";
-import { referralInput, decisionInput, followupInput, imageInput } from "@shared/schema";
+import { referralInput, decisionInput, followupInput, imageInput, questionInput, pushSubscriptionInput } from "@shared/schema";
 import { TEAMS, canAccess, canManage, type Team } from "@shared/teams";
 import { z } from "zod";
 import { appendChecklistSurnames, searchIRegister } from "../script/hpcsa-scrape";
-import { hpcsaIdentityMatches } from "./hpcsa-verification";
+import { hpcsaIdentityMatches, normalizeHpcsaNumber } from "./hpcsa-verification";
+import { issuePortalToken, portalFingerprint, readPortalToken } from "./portal-session";
+import { notifyFollowup, notifyNewReferral, notifyQuestion, notifyResponse, saToday } from "./notify";
+import { allowedPushEndpoint, pushEnabled, pushPublicKey } from "./push";
 
 // Surname that a new unverified referrer needs in the register. Added to the
 // checklist so the scheduled refresh covers it, AND fetched immediately (when
@@ -32,7 +35,7 @@ async function queueSurnameForRefresh(fullName: string) {
       const { sb } = await import("./db");
       for (const r of rows) {
         await sb.from("hpcsa_register").upsert(
-          { surname: r.surname, full_name: r.full_name, registration_number: r.registration_number, hpcsa_number: r.registration_number.startsWith("NOREG_") ? "" : r.registration_number.replace(/\s+/g, ""), categories: r.categories, city: r.city, postal_code: r.postal_code, status: r.status, scraped_at: new Date().toISOString() },
+          { surname: r.surname, full_name: r.full_name, registration_number: r.registration_number, hpcsa_number: r.registration_number.startsWith("NOREG_") ? "" : normalizeHpcsaNumber(r.registration_number), categories: r.categories, city: r.city, postal_code: r.postal_code, status: r.status, scraped_at: new Date().toISOString() },
           { onConflict: "registration_number" }
         );
       }
@@ -45,16 +48,24 @@ async function queueSurnameForRefresh(fullName: string) {
   }
 }
 
-const referrerProfile = z.object({
+const profileFields = {
   name: z.string().min(2).max(100),
   email: z.string().email().max(100),
   phone: z.string().min(9).max(30),
-  hospital: z.string().max(100).optional().default(""),
-  department: z.string().max(100).optional().default(""),
+  hospital: z.string().max(100),
+  department: z.string().max(100),
   specialty: z.string().min(1).max(100),
   profession: z.enum(["doctor", "nurse", "other"]),
-  hpcsa: z.string().max(30).optional().default(""),
+  hpcsa: z.string().max(30),
+};
+const referrerProfile = z.object({
+  ...profileFields,
+  hospital: profileFields.hospital.optional().default(""),
+  department: profileFields.department.optional().default(""),
+  hpcsa: profileFields.hpcsa.optional().default(""),
 });
+// Updates must not inherit sign-up defaults: a phone-only change would otherwise blank the HPCSA number.
+const referrerProfileUpdate = z.object(profileFields).partial();
 
 // The roster is a hand/AI-regenerated file (an agent rewrites it from the monthly
 // CHBAH PDFs). It's read fresh on each request (cached only by mtime) so dropping in
@@ -80,7 +91,6 @@ function loadRoster(): any {
   return rosterCache?.data; // last good parse, or undefined
 }
 function rosterSpecs(): any[] { return loadRoster()?.specialties || []; }
-const saToday = () => new Date(Date.now() + 2 * 3600e3).toISOString().slice(0, 10);
 function rosterFor(date: string, spec?: string) {
   return rosterSpecs().filter(s => !spec || s.id === spec).map(s => {
     const cmap: Record<string, any> = {}; (s.contacts || []).forEach((c: any) => cmap[c.id] = c);
@@ -89,7 +99,7 @@ function rosterFor(date: string, spec?: string) {
   });
 }
 
-/* simple in-memory rate limiter (per process; keys expire with their window) */
+/* in-memory rate limiter: per process, reset on restart (see README "Safety and operations"); keys expire with their window */
 const hits = new Map<string, { windowMs: number; times: number[] }>();
 const MAX_LIMIT_KEYS = 50_000;
 function pruneHits(now = Date.now()) {
@@ -183,11 +193,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if(!r || !canAccess(req.user,r.team)) { res.status(404).json({message:"Referral not found"}); return null; }
     return r;
   };
-  const portal = async(req:AuthReq,res:Response) => {
+  // Follow-up portal access: a short-lived token (header) from a prior code
+  // exchange, or - for older clients - the reference and private code in the body.
+  const portal = async(req:AuthReq,res:Response):Promise<{referral:any;portalHash:string;token:string;expiresAt:string}|null> => {
+    const denied = () => { res.status(404).json({message:"Incorrect reference or follow-up code, or this referral has expired"}); return null; };
+    const presented = String(req.headers["x-portal-token"] || "");
+    if(presented) {
+      const claims = readPortalToken(presented);
+      if(!claims) { res.status(410).json({message:"Your follow-up session has ended. Enter your reference and code again."}); return null; }
+      if(limit("portal-session:"+claims.rid,600,3600e3)) { res.status(429).json({message:"Too many requests"}); return null; }
+      const row = await db.portalById(claims.rid);
+      if(!row || portalFingerprint(row.portalHash)!==claims.fp) { res.status(410).json({message:"Your follow-up session has ended. Enter your reference and code again."}); return null; }
+      return { ...row, ...issuePortalToken(claims.rid,row.portalHash,{iat:claims.iat}) };
+    }
     if(limit("portal:"+ipOf(req),300,3600e3)) { res.status(429).json({message:"Too many requests"}); return null; }
-    const r=await db.portal(String(req.body?.ref||""),String(req.body?.code||"").trim());
-    if(!r) { res.status(404).json({message:"Incorrect reference or follow-up code, or this referral has expired"}); return null; }
-    return r;
+    const row = await db.portalLogin(String(req.body?.ref||""),String(req.body?.code||"").trim());
+    if(!row) return denied();
+    return { ...row, ...issuePortalToken(row.referral.id,row.portalHash) };
   };
 
   /* ----- public ----- */
@@ -210,6 +232,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       throw e;
     }
     await audit(req, "referral_submitted", r.id, `${r.ref} from ${p.data.hospital} (${req.user.role})`);
+    void notifyNewReferral(r);
     res.json({ ref: r.ref, followupCode:(r as any).followupCode });
   }));
   // Status lookup needs the reference AND the referring cellphone number; returns only coarse status.
@@ -218,27 +241,42 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const ref = String(req.body?.ref || "").toUpperCase().trim().slice(0, 30); const ph = String(req.body?.phone || "").replace(/\D/g, "").slice(-9);
     if (limited("stref:" + ref, 10, 3600e3)) return res.status(429).json({ message: "Too many requests" });
     const r: any = ref && ph.length === 9 ? await db.byRef(ref) : null;
-    if (!r || String(r.phone || "").replace(/\D/g, "").slice(-9) !== ph) { if (ref) limit("stref:" + ref, 10, 3600e3); return res.status(404).json({ message: "No referral matches that reference and number" }); }
+    if (!r || r.purgedAt || String(r.phone || "").replace(/\D/g, "").slice(-9) !== ph) { if (ref) limit("stref:" + ref, 10, 3600e3); return res.status(404).json({ message: "No referral matches that reference and number" }); }
     res.json({ ref: r.ref, status: r.status, priority: r.priority, bedStatus: r.bedStatus, updatedAt: r.decidedAt || r.createdAt });
   }));
   app.post("/api/portal",wrap(async(req,res)=>{
-    const r=await portal(req,res); if(!r) return;
-    res.json({ref:r.ref,team:r.team,consultType:r.consultType,status:r.status,priority:r.priority,
-      openedAt:r.openedAt,openedBy:r.openedBy,decidedBy:r.decidedBy,decidedAt:r.decidedAt,
+    const access=await portal(req,res); if(!access) return; const r=access.referral;
+    res.json({portalToken:access.token,portalExpiresAt:access.expiresAt,ref:r.ref,team:r.team,consultType:r.consultType,status:r.status,priority:r.priority,
+      openedAt:r.openedAt,openedBy:r.openedBy,decidedBy:r.decidedBy,decidedAt:r.decidedAt,awaitingInfoAt:r.awaitingInfoAt??null,
       bedStatus:r.bedStatus,bedWard:r.bedWard,decisionNote:r.decisionNote,
       timeline:await db.timeline(r.id),images:(await db.images(r.id)).filter(im=>!im.followupId)});
   }));
   app.post("/api/portal/followup",wrap(async(req,res)=>{
     if(limit("followup:"+ipOf(req),20,3600e3)) return res.status(429).json({message:"Too many updates"});
     const p=followupInput.safeParse(req.body); if(!p.success) return res.status(400).json({message:"Enter an update and up to 3 images"});
-    const r=await portal(req,res); if(!r) return;
-    try { await db.append(r.id,r.doctorName,null,"update",p.data.body,p.data.images); }
+    const access=await portal(req,res); if(!access) return; const r=access.referral;
+    const replying=!!r.awaitingInfoAt;
+    try { await db.append(r.id,r.doctorName,null,replying?"reply":"update",p.data.body,p.data.images); }
     catch(e:any) { if(e.message.includes("image") || e.message.includes("JPEG")) return res.status(400).json({message:e.message}); throw e; }
-    await db.audit({action:"referral_followup",referralId:r.id,detail:"Referrer submitted clinical update",ip:ipOf(req)});
+    await db.audit({action:"referral_followup",referralId:r.id,detail:replying?"Referrer replied to the team's question":"Referrer submitted clinical update",ip:ipOf(req)});
+    void notifyFollowup(r);
     res.json({ok:true});
   }));
+  app.post("/api/portal/push",wrap(async(req,res)=>{
+    const p=pushSubscriptionInput.safeParse(req.body); if(!p.success||!allowedPushEndpoint(p.data.subscription.endpoint)) return res.status(400).json({message:"This browser's push subscription is not supported"});
+    if(!pushEnabled()) return res.status(503).json({message:"Push notifications are not configured on this server"});
+    const access=await portal(req,res); if(!access) return;
+    const {endpoint,keys}=p.data.subscription;
+    await db.savePushSub({endpoint,p256dh:keys.p256dh,auth:keys.auth},{referralId:access.referral.id});
+    res.json({ok:true});
+  }));
+  app.delete("/api/portal/push",wrap(async(req,res)=>{
+    const endpoint=String(req.body?.endpoint||""); if(!endpoint||endpoint.length>1000) return res.status(400).json({message:"Choose a subscription to remove"});
+    const access=await portal(req,res); if(!access) return;
+    await db.removePushSub(endpoint,{referralId:access.referral.id}); res.json({ok:true});
+  }));
   app.post("/api/portal/image/:imageId",wrap(async(req,res)=>{
-    const r=await portal(req,res); if(!r) return;
+    const access=await portal(req,res); if(!access) return; const r=access.referral;
     const im=await db.image(Number(req.params.imageId),r.id); im ? res.json(im) : res.status(404).end();
   }));
 
@@ -270,6 +308,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json({ user: req.user });
   }));
 
+  /* ----- push notifications ----- */
+  app.get("/api/push/key", (_req, res) => res.json({ enabled: pushEnabled(), publicKey: pushPublicKey() }));
+  app.post("/api/push/subscribe", A, wrap(async (req, res) => {
+    const p = pushSubscriptionInput.safeParse(req.body); if (!p.success || !allowedPushEndpoint(p.data.subscription.endpoint)) return res.status(400).json({ message: "This browser's push subscription is not supported" });
+    if (!pushEnabled()) return res.status(503).json({ message: "Push notifications are not configured on this server" });
+    if (limit("push:" + req.user.id, 30, 3600e3)) return res.status(429).json({ message: "Too many requests" });
+    const { endpoint, keys } = p.data.subscription;
+    await db.savePushSub({ endpoint, p256dh: keys.p256dh, auth: keys.auth }, { userId: req.user.id });
+    await audit(req, "push_enabled"); res.json({ ok: true });
+  }));
+  app.delete("/api/push/subscribe", A, wrap(async (req, res) => {
+    const endpoint = String(req.body?.endpoint || ""); if (!endpoint || endpoint.length > 1000) return res.status(400).json({ message: "Choose a subscription to remove" });
+    await db.removePushSub(endpoint, { userId: req.user.id }); await audit(req, "push_disabled"); res.json({ ok: true });
+  }));
+
   /* ----- referrer self-service (the referral PWA) ----- */
   app.post("/api/referrer/signup", wrap(async (req, res) => {
     if (limit("rsignup:" + ipOf(req), 10, 60 * 60e3)) return res.status(429).json({ message: "Too many signups. Try again later." });
@@ -280,26 +333,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const existing = await db.userByIdentity(String(username), p.data.email);
     if (existing) return res.status(409).json({ message: "An account already exists for that username or email" });
     const d = p.data;
-    const hpcsa = d.hpcsa.replace(/\s+/g, "");
+    const hpcsa = normalizeHpcsaNumber(d.hpcsa);
     // The HPCSA register is public, so a name + number match only proves the
     // person exists, not that this sign-up is them. A match is flagged for the
     // administrator ("hpcsa") but never verifies the account on its own.
-    let verifyStatus = "none";
+    let verifyStatus = "card_pending";
     let hpcsaMatched = false;
     try {
       if (hpcsa) {
         const hits = await db.hpcsaLookup(d.name, hpcsa);
-        const byNum = hits.rows.find(r => r.hpcsa_number.replace(/\s+/g, "").toLowerCase() === hpcsa.toLowerCase());
+        const byNum = hits.rows.find(r => normalizeHpcsaNumber(r.hpcsa_number) === hpcsa);
         if (byNum) {
           const status = String(byNum.status).toUpperCase();
           const identityMatches = hpcsaIdentityMatches(d.name, hpcsa, byNum);
           if (identityMatches) { verifyStatus = "hpcsa"; hpcsaMatched = true; }
           else { verifyStatus = "card_pending"; queueSurnameForRefresh(d.name); }
-          audit(req, "hpcsa_check", null, `num=${hpcsa} status=${status || "n/a"} identityMatch=${identityMatches}`);
+          await audit(req, "hpcsa_check", null, `num=${hpcsa} status=${status || "n/a"} identityMatch=${identityMatches}`);
         } else {
           verifyStatus = "card_pending";
           queueSurnameForRefresh(d.name);
-          audit(req, "hpcsa_check", null, `num=${hpcsa} not found`);
+          await audit(req, "hpcsa_check", null, `num=${hpcsa} not found`);
         }
       } else {
         queueSurnameForRefresh(d.name);
@@ -310,7 +363,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       verifyStatus = "card_pending";
       try { await audit(req, "hpcsa_check", null, `lookup error: ${e?.message}`); } catch { /* ignore */ }
     }
-    const u = await db.addReferrer({ ...d, username: String(username), password: String(password), hpcsa, verifyStatus });
+    let u;
+    try { u = await db.addReferrer({ ...d, username: String(username), password: String(password), hpcsa, verifyStatus }); }
+    catch (e) { if (isUniqueViolation(e)) return res.status(409).json({ message: "An account already exists for that username or email" }); throw e; }
     await db.audit({ action: "referrer_signup", detail: `${u.username}${hpcsaMatched ? " (HPCSA register match, awaiting admin confirmation)" : ""}`, ip: ipOf(req) });
     res.json({
       ok: true,
@@ -322,26 +377,41 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     });
   }));
   app.post("/api/referrer/profile", REF, isReferrer, wrap(async (req, res) => {
-    const p = referrerProfile.partial().safeParse(req.body || {});
+    const p = referrerProfileUpdate.safeParse(req.body || {});
     if (!p.success) return res.status(400).json({ message: "Invalid profile fields" });
-    const norm = (v: string) => v.replace(/\s+/g, "").toLowerCase();
-    const renames = p.data.name !== undefined && p.data.name.trim() !== req.user.name;
-    const renumbers = p.data.hpcsa !== undefined && norm(p.data.hpcsa) !== norm(req.user.hpcsaNumber || "");
-    if (req.user.verifyStatus === "verified" && (renames || renumbers)) return res.status(409).json({ message: "Your name and HPCSA number are locked after verification. Contact the BaraBridge admin to change them." });
-    const u = await db.updateReferrer(req.user.id, p.data);
-    if (u && u.verifyStatus !== "verified" && u.hpcsaNumber && (renames || renumbers)) {
-      const hits = await db.hpcsaLookup(u.name, u.hpcsaNumber);
-      const match = hits.rows.find(r => hpcsaIdentityMatches(u.name, u.hpcsaNumber!, r));
+    const emailTaken = () => res.status(409).json({ message: "Another account already uses that email address" });
+    if (p.data.email !== undefined && await db.emailTaken(p.data.email, req.user.id)) return emailTaken();
+    const before = req.user;
+    let u;
+    try { u = await db.updateReferrer(req.user.id, p.data); }
+    catch (e) { if (isUniqueViolation(e)) return emailTaken(); throw e; }
+    const name = u?.name ?? before.name, number = normalizeHpcsaNumber(u?.hpcsaNumber ?? "");
+    const sameName = (a: string, b: string) => a.trim().replace(/\s+/g, " ").toLowerCase() === b.trim().replace(/\s+/g, " ").toLowerCase();
+    const identityChanged = (p.data.name !== undefined && !sameName(p.data.name, before.name)) ||
+      (p.data.hpcsa !== undefined && normalizeHpcsaNumber(p.data.hpcsa) !== normalizeHpcsaNumber(before.hpcsaNumber || ""));
+    let reverify = false;
+    if (identityChanged) {
+      // Verification belongs to the identity that was checked, and the public
+      // register cannot prove a new one belongs to this person, so any change
+      // goes back to the administrator; a register match is only flagged.
+      if (before.verifyStatus === "verified") { await db.demoteReferrer(req.user.id); reverify = true; }
+      let match = false;
+      if (number) {
+        try { const hits = await db.hpcsaLookup(name, number); match = hits.rows.some(r => hpcsaIdentityMatches(name, number, r)); }
+        catch (e: any) { await audit(req, "hpcsa_check", null, `lookup error: ${e?.message}`); }
+      }
       if (match) await db.markHpcsaMatched(req.user.id);
-      else queueSurnameForRefresh(u.name);
+      else queueSurnameForRefresh(name);
     }
-    await db.audit({ userId: req.user.id, userName: req.user.name, action: "referrer_profile_updated", ip: ipOf(req) });
-    res.json({ ok: true });
+    await db.audit({ userId: req.user.id, userName: req.user.name, action: reverify ? "referrer_reverify_required" : "referrer_profile_updated", ip: ipOf(req) });
+    res.json(reverify
+      ? { ok: true, reverify: true, message: "Your name or HPCSA number changed, so your account is back in the verification queue until an administrator confirms it. Upload your staff card if you have not already." }
+      : { ok: true });
   }));
   app.post("/api/referrer/card", REF, isReferrer, wrap(async (req, res) => {
     const img = imageInput.safeParse(req.body?.image);
     if (!img.success) return res.status(400).json({ message: "Please upload a JPEG, PNG or WebP photo under 2 MB" });
-    if (req.user.verifyStatus === "verified") return res.status(409).json({ message: "Your account is already verified." });
+    if (req.user.verifyStatus === "verified") return res.status(409).json({ message: "Your account is already verified. No staff card is needed." });
     try { await db.attachCard(req.user.id, img.data); }
     catch (e: any) { if (e.message.includes("image") || e.message.includes("JPEG")) return res.status(400).json({ message: e.message }); throw e; }
     await db.audit({ userId: req.user.id, userName: req.user.name, action: "referrer_card_uploaded", ip: ipOf(req) });
@@ -375,12 +445,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (limit("referrer-followup:" + req.user.id, 20, 3600e3)) return res.status(429).json({ message: "Too many updates" });
     const p = followupInput.omit({ ref: true, code: true }).safeParse(req.body);
     if (!p.success) return res.status(400).json({ message: "Enter an update and up to 3 images" });
-    try { await db.append(r.id, req.user.name, req.user.id, "update", p.data.body, p.data.images); }
+    const replying = !!r.awaitingInfoAt;
+    try { await db.append(r.id, req.user.name, req.user.id, replying ? "reply" : "update", p.data.body, p.data.images); }
     catch (e: any) { if (e.message.includes("image") || e.message.includes("JPEG")) return res.status(400).json({ message: e.message }); throw e; }
-    await audit(req, "referral_followup", r.id, "Referrer submitted clinical update"); res.json({ ok: true });
+    await audit(req, "referral_followup", r.id, replying ? "Referrer replied to the team's question" : "Referrer submitted clinical update");
+    void notifyFollowup(r); res.json({ ok: true });
   }));
-  app.get("/api/referrer/roster", REF, referrerWorkspace, (req: AuthReq, res) => {
-    if (req.user.role === "referrer" && req.user.verifyStatus !== "verified") return res.status(403).json({ message: "The on-call roster is available once your account is verified." });
+  // The roster lists on-call clinicians' direct numbers, so it is only for
+  // verified referrers (and the global administrator).
+  const verifiedReferrer = (req: AuthReq, res: Response, next: NextFunction) => {
+    if (req.user?.role === "admin" || req.user?.verifyStatus === "verified") return next();
+    res.status(403).json({ message: "Your account must be verified before you can view the on-call roster." });
+  };
+  app.get("/api/referrer/roster", REF, referrerWorkspace, verifiedReferrer, (req: AuthReq, res) => {
     const date = String(req.query.date || saToday());
     res.json({ hospital: loadRoster()?.hospital, generated: loadRoster()?.generated, date, specs: rosterFor(date, req.query.spec ? String(req.query.spec) : undefined) });
   });
@@ -419,7 +496,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/referrals", A, wrap(async (req, res) => { if (req.user.role === "referrer") return res.status(403).json({ message: "Use My consults in the referrer portal" }); maybePurge(); res.json(await db.list(scope(req))); }));
   app.get("/api/referrals/:id", A, wrap(async (req, res) => {
     const r=await findCase(req,res); if(!r) return;
-    await db.markOpened(r.id,req.user.name);
+    await db.markOpened(r.id,req.user.name,r.latestFollowupAt);
     await audit(req, "view_referral", r.id, r.ref);
     res.json({...await db.get(r.id),timeline:await db.timeline(r.id),images:(await db.images(r.id)).filter(im=>!im.followupId)});
   }));
@@ -431,7 +508,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if(p.data.status==="advised" && !p.data.decisionNote?.trim()) return res.status(400).json({message:"Type the clinical advice before sending"});
     // Notes are only recorded alongside a decision so every change appears in the timeline.
     if(p.data.decisionNote!==undefined && !p.data.status) return res.status(400).json({message:"Choose a decision to record a note"});
-    const d: any = { ...p.data }; if (d.decidedBy !== undefined) d.decidedBy = req.user.name; if (d.ack !== undefined) d.ack = req.user.name;
+    const { ackVia, ...fields } = p.data;
+    const d: any = { ...fields }; if (d.decidedBy !== undefined) d.decidedBy = req.user.name; if (d.ack !== undefined) d.ack = req.user.name;
     if(d.status) d.decidedBy=req.user.name;
     if(d.lat!==undefined && Math.abs(Number(d.lat))>90 || d.lon!==undefined && Math.abs(Number(d.lon))>180) return res.status(400).json({message:"Invalid coordinates"});
     let r;
@@ -439,12 +517,24 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const {status,decisionNote,decidedBy,remindAt,...rest}=d;
       if(Object.keys(rest).length) await db.update(cur.id,rest);
       r=await db.respond(cur.id,status,decisionNote ?? cur.decisionNote ?? "",req.user.name,req.user.id,remindAt ?? cur.remindAt ?? null);
+      if(r && status!=="pending") void notifyResponse(r);
     } else r=await db.update(cur.id,d);
     if(!r) return res.status(404).end();
-    await audit(req, "update_referral", r.id, Object.keys(d).map(k => `${k}=${k === "decisionNote" ? "(note)" : d[k]}`).join(", "));
+    await audit(req, "update_referral", r.id, Object.keys(d).map(k => `${k}=${k === "decisionNote" ? "(note)" : d[k]}`).join(", ") + (d.ack !== undefined && ackVia ? ` ackVia=${ackVia}` : ""));
     res.json(r);
   }));
   app.post("/api/referrals/:id/shared", A, wrap(async (req, res) => { if(!await findCase(req,res)) return; await audit(req, "shared_whatsapp", Number(req.params.id), "WhatsApp draft opened"); res.json({ ok: true }); }));
+  app.post("/api/referrals/:id/question", A, wrap(async (req, res) => {
+    const r = await findCase(req, res); if (!r) return;
+    if (r.purgedAt) return res.status(410).json({ message: "Clinical record has expired" });
+    if (limit("question:" + req.user.id, 60, 3600e3)) return res.status(429).json({ message: "Too many messages" });
+    const p = questionInput.safeParse(req.body); if (!p.success) return res.status(400).json({ message: "Type the question for the referrer (2 to 2000 characters)" });
+    await db.append(r.id, req.user.name, req.user.id, "question", p.data.body);
+    if (!r.ackAt) await db.update(r.id, { ack: req.user.name });
+    await audit(req, "referral_question", r.id, "Asked the referrer for more information");
+    void notifyQuestion(r);
+    res.json({ ok: true });
+  }));
   app.get("/api/referrals/:id/images/:imageId",A,wrap(async(req,res)=>{
     const r=await findCase(req,res); if(!r) return;
     const im=await db.image(Number(req.params.imageId),r.id); if(!im) return res.status(404).end();
@@ -484,7 +574,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/unit-members",A,wrap(async(req,res)=>{
     const team=String(req.query.team||req.user.team);
     if(!TEAMS.includes(team as Team)||!canAccess(req.user,team)) return res.status(403).json({message:"Unit not accessible"});
-    res.json((await db.users()).filter(u=>u.active&&u.team===team).map(u=>({id:u.id,name:u.name,team:u.team,role:u.role,phone:u.phone})));
+    const members=(await db.users()).filter(u=>u.active&&u.team===team);
+    const devices=await db.pushDeviceCounts(members.map(u=>u.id));
+    res.json(members.map(u=>({id:u.id,name:u.name,team:u.team,role:u.role,phone:u.phone,pushDevices:devices[u.id]||0})));
   }));
   app.put("/api/unit-roster",...MANAGER,wrap(async(req,res)=>{
     const p=z.object({team:z.enum(TEAMS),day:z.string().regex(/^\d{4}-\d{2}-\d{2}$/),entries:z.array(z.object({userId:z.number().int().positive(),duty:z.string().min(1).max(100)})).max(30)}).safeParse(req.body);
@@ -500,7 +592,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   /* ----- admin ----- */
   app.put("/api/settings", ADMIN, wrap(async (req, res) => {
     const b = req.body || {}; const v: any = {};
-    for (const k of ["p1", "p2", "p3", "repeat", "retentionDays"]) if (b[k] !== undefined) v[k] = Math.max(1, Math.min(3650, Number(b[k]) || 1));
+    for (const k of ["p1", "p2", "p3", "repeat", "escalate", "retentionDays"]) if (b[k] !== undefined) v[k] = Math.max(1, Math.min(3650, Number(b[k]) || 1));
     if (b.sound !== undefined) v.sound = !!b.sound;
     for (const k of ["responsibleParty", "infoOfficer", "infoOfficerEmail", "infoOfficerPhone"]) if (b[k] !== undefined) v[k] = String(b[k]).slice(0, 200);
     const n = await db.saveSettings(v); await audit(req, "settings_changed", null, Object.keys(v).join(", ")); res.json(n);

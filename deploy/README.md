@@ -35,8 +35,8 @@ Preservation --------- separate services; existing workloads intact+
 5. Stop and disable the temporary setup service after handoff. Remove its token
    environment file. Never record the token or secret in Git, logs, or job cards.
 
-6. Apply `supabase/migration_hardening.sql` to the existing database (additive and
-   re-runnable). Then generate `APP_DATA_KEY` (for example `openssl rand -hex 32`),
+6. Apply `supabase/migration_profile_retention.sql` to the existing database
+   (additive and re-runnable). Then generate `APP_DATA_KEY` (for example `openssl rand -hex 32`),
    store it in the secrets manager first, append it to
    `/var/lib/transferdesk/runtime.env` as `APP_DATA_KEY="..."`, restart
    `transferdesk.service`, and run `node dist/reencrypt-data.cjs --dry-run`, then
@@ -57,12 +57,18 @@ must be configured and verified separately.
 
 The application runs behind Caddy on loopback port 5000; setup uses loopback 5001.
 Only ports 80 and 443 are added to the host firewall. Bulk HPCSA refresh is
-disabled in the web process (`HPCSA_AUTO_REFRESH=0`) pending an independent job.
+disabled in the web process (it only runs with `HPCSA_AUTO_REFRESH=1`; the
+handoff also writes `HPCSA_AUTO_REFRESH=0`) pending an independent job.
 After `supabase/migration_hpcsa.sql` is applied, run the packaged
 `dist/hpcsa-scrape.cjs` worker under `transferdesk-hpcsa.service` to seed the
 surname checklist. Enable `transferdesk-hpcsa.timer` only after that run
 passes. The timer refreshes the checklist twice monthly without restarting
 the clinical server. It does not perform the full A-Z register export.
+
+Web push is off until `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT`
+are added to `/var/lib/transferdesk/runtime.env` (keys from `npx web-push
+generate-vapid-keys`) and `supabase/migration_chat_push.sql` is applied; restart
+TransferDesk afterwards and check that `/api/health` reports `push: "enabled"`.
 
 This deployment does not claim native Windows/Android/iOS packaging, push
 delivery, live clinical workflow validation, or tested backup restoration.
