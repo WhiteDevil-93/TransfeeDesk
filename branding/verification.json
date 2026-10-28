@@ -1,0 +1,546 @@
+{
+  "result": "passed",
+  "checks": [
+    "All SVG and PNG dimensions read",
+    "All PNG pixels decoded",
+    "Representative alpha corners and nonempty artwork",
+    "Six-entry ICO directory",
+    "All gallery links resolve"
+  ],
+  "assets": [
+    {
+      "file": "badges/role-admin.png",
+      "width": 480,
+      "height": 96,
+      "alpha": true
+    },
+    {
+      "file": "badges/role-admin.svg",
+      "width": 480,
+      "height": 96,
+      "alpha": true
+    },
+    {
+      "file": "badges/role-receiving.png",
+      "width": 480,
+      "height": 96,
+      "alpha": true
+    },
+    {
+      "file": "badges/role-receiving.svg",
+      "width": 480,
+      "height": 96,
+      "alpha": true
+    },
+    {
+      "file": "badges/role-referrer.png",
+      "width": 480,
+      "height": 96,
+      "alpha": true
+    },
+    {
+      "file": "badges/role-referrer.svg",
+      "width": 480,
+      "height": 96,
+      "alpha": true
+    },
+    {
+      "file": "badges/unit-meu.png",
+      "width": 640,
+      "height": 176,
+      "alpha": true
+    },
+    {
+      "file": "badges/unit-meu.svg",
+      "width": 640,
+      "height": 176,
+      "alpha": true
+    },
+    {
+      "file": "badges/unit-seu.png",
+      "width": 640,
+      "height": 176,
+      "alpha": true
+    },
+    {
+      "file": "badges/unit-seu.svg",
+      "width": 640,
+      "height": 176,
+      "alpha": true
+    },
+    {
+      "file": "badges/unit-teu.png",
+      "width": 640,
+      "height": 176,
+      "alpha": true
+    },
+    {
+      "file": "badges/unit-teu.svg",
+      "width": 640,
+      "height": 176,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-blue-128.png",
+      "width": 128,
+      "height": 128,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-blue-16.png",
+      "width": 16,
+      "height": 16,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-blue-180.png",
+      "width": 180,
+      "height": 180,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-blue-192.png",
+      "width": 192,
+      "height": 192,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-blue-256.png",
+      "width": 256,
+      "height": 256,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-blue-32.png",
+      "width": 32,
+      "height": 32,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-blue-48.png",
+      "width": 48,
+      "height": 48,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-blue-512.png",
+      "width": 512,
+      "height": 512,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-blue-64.png",
+      "width": 64,
+      "height": 64,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-blue.png",
+      "width": 1024,
+      "height": 1024,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-blue.svg",
+      "width": 1024,
+      "height": 1024,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-dark-128.png",
+      "width": 128,
+      "height": 128,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-dark-16.png",
+      "width": 16,
+      "height": 16,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-dark-180.png",
+      "width": 180,
+      "height": 180,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-dark-192.png",
+      "width": 192,
+      "height": 192,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-dark-256.png",
+      "width": 256,
+      "height": 256,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-dark-32.png",
+      "width": 32,
+      "height": 32,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-dark-48.png",
+      "width": 48,
+      "height": 48,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-dark-512.png",
+      "width": 512,
+      "height": 512,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-dark-64.png",
+      "width": 64,
+      "height": 64,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-dark.png",
+      "width": 1024,
+      "height": 1024,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-dark.svg",
+      "width": 1024,
+      "height": 1024,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-teal-128.png",
+      "width": 128,
+      "height": 128,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-teal-16.png",
+      "width": 16,
+      "height": 16,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-teal-180.png",
+      "width": 180,
+      "height": 180,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-teal-192.png",
+      "width": 192,
+      "height": 192,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-teal-256.png",
+      "width": 256,
+      "height": 256,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-teal-32.png",
+      "width": 32,
+      "height": 32,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-teal-48.png",
+      "width": 48,
+      "height": 48,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-teal-512.png",
+      "width": 512,
+      "height": 512,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-teal-64.png",
+      "width": 64,
+      "height": 64,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-teal.png",
+      "width": 1024,
+      "height": 1024,
+      "alpha": true
+    },
+    {
+      "file": "icons/app-teal.svg",
+      "width": 1024,
+      "height": 1024,
+      "alpha": true
+    },
+    {
+      "file": "icons/maskable.png",
+      "width": 512,
+      "height": 512,
+      "alpha": true
+    },
+    {
+      "file": "icons/maskable.svg",
+      "width": 512,
+      "height": 512,
+      "alpha": true
+    },
+    {
+      "file": "icons/workflow-consult.png",
+      "width": 96,
+      "height": 96,
+      "alpha": true
+    },
+    {
+      "file": "icons/workflow-consult.svg",
+      "width": 96,
+      "height": 96,
+      "alpha": true
+    },
+    {
+      "file": "icons/workflow-followup.png",
+      "width": 96,
+      "height": 96,
+      "alpha": true
+    },
+    {
+      "file": "icons/workflow-followup.svg",
+      "width": 96,
+      "height": 96,
+      "alpha": true
+    },
+    {
+      "file": "icons/workflow-location.png",
+      "width": 96,
+      "height": 96,
+      "alpha": true
+    },
+    {
+      "file": "icons/workflow-location.svg",
+      "width": 96,
+      "height": 96,
+      "alpha": true
+    },
+    {
+      "file": "icons/workflow-notification.png",
+      "width": 96,
+      "height": 96,
+      "alpha": true
+    },
+    {
+      "file": "icons/workflow-notification.svg",
+      "width": 96,
+      "height": 96,
+      "alpha": true
+    },
+    {
+      "file": "icons/workflow-referral.png",
+      "width": 96,
+      "height": 96,
+      "alpha": true
+    },
+    {
+      "file": "icons/workflow-referral.svg",
+      "width": 96,
+      "height": 96,
+      "alpha": true
+    },
+    {
+      "file": "icons/workflow-roster.png",
+      "width": 96,
+      "height": 96,
+      "alpha": true
+    },
+    {
+      "file": "icons/workflow-roster.svg",
+      "width": 96,
+      "height": 96,
+      "alpha": true
+    },
+    {
+      "file": "icons/workflow-team.png",
+      "width": 96,
+      "height": 96,
+      "alpha": true
+    },
+    {
+      "file": "icons/workflow-team.svg",
+      "width": 96,
+      "height": 96,
+      "alpha": true
+    },
+    {
+      "file": "icons/workflow-transfer.png",
+      "width": 96,
+      "height": 96,
+      "alpha": true
+    },
+    {
+      "file": "icons/workflow-transfer.svg",
+      "width": 96,
+      "height": 96,
+      "alpha": true
+    },
+    {
+      "file": "logos/mark-blue.png",
+      "width": 512,
+      "height": 512,
+      "alpha": true
+    },
+    {
+      "file": "logos/mark-blue.svg",
+      "width": 512,
+      "height": 512,
+      "alpha": true
+    },
+    {
+      "file": "logos/mark-ink.png",
+      "width": 512,
+      "height": 512,
+      "alpha": true
+    },
+    {
+      "file": "logos/mark-ink.svg",
+      "width": 512,
+      "height": 512,
+      "alpha": true
+    },
+    {
+      "file": "logos/mark-teal.png",
+      "width": 512,
+      "height": 512,
+      "alpha": true
+    },
+    {
+      "file": "logos/mark-teal.svg",
+      "width": 512,
+      "height": 512,
+      "alpha": true
+    },
+    {
+      "file": "logos/mark-white.png",
+      "width": 512,
+      "height": 512,
+      "alpha": true
+    },
+    {
+      "file": "logos/mark-white.svg",
+      "width": 512,
+      "height": 512,
+      "alpha": true
+    },
+    {
+      "file": "logos/wordmark-blue.png",
+      "width": 1000,
+      "height": 180,
+      "alpha": true
+    },
+    {
+      "file": "logos/wordmark-blue.svg",
+      "width": 1000,
+      "height": 180,
+      "alpha": true
+    },
+    {
+      "file": "logos/wordmark-ink.png",
+      "width": 1000,
+      "height": 180,
+      "alpha": true
+    },
+    {
+      "file": "logos/wordmark-ink.svg",
+      "width": 1000,
+      "height": 180,
+      "alpha": true
+    },
+    {
+      "file": "logos/wordmark-teal.png",
+      "width": 1000,
+      "height": 180,
+      "alpha": true
+    },
+    {
+      "file": "logos/wordmark-teal.svg",
+      "width": 1000,
+      "height": 180,
+      "alpha": true
+    },
+    {
+      "file": "logos/wordmark-white.png",
+      "width": 1000,
+      "height": 180,
+      "alpha": true
+    },
+    {
+      "file": "logos/wordmark-white.svg",
+      "width": 1000,
+      "height": 180,
+      "alpha": true
+    },
+    {
+      "file": "patterns/transfer-pattern.png",
+      "width": 512,
+      "height": 512,
+      "alpha": true
+    },
+    {
+      "file": "patterns/transfer-pattern.svg",
+      "width": 512,
+      "height": 512,
+      "alpha": true
+    },
+    {
+      "file": "social/github-banner.png",
+      "width": 1280,
+      "height": 640,
+      "alpha": true
+    },
+    {
+      "file": "social/github-banner.svg",
+      "width": 1280,
+      "height": 640,
+      "alpha": true
+    },
+    {
+      "file": "wallpapers/desktop-1080p.png",
+      "width": 1920,
+      "height": 1080,
+      "alpha": false
+    },
+    {
+      "file": "wallpapers/desktop-1440p.png",
+      "width": 2560,
+      "height": 1440,
+      "alpha": false
+    },
+    {
+      "file": "wallpapers/desktop-4k.png",
+      "width": 3840,
+      "height": 2160,
+      "alpha": false
+    },
+    {
+      "file": "wallpapers/desktop-original.png",
+      "width": 1672,
+      "height": 941,
+      "alpha": false
+    },
+    {
+      "file": "wallpapers/phone-1080x1920.png",
+      "width": 1080,
+      "height": 1920,
+      "alpha": false
+    },
+    {
+      "file": "wallpapers/phone-original.png",
+      "width": 941,
+      "height": 1672,
+      "alpha": false
+    }
+  ]
+}
