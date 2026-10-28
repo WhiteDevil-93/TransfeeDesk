@@ -74,10 +74,11 @@ export function Timeline({entries,referralId,portalToken,imageBase}: {entries?:F
   </Card>)}</div>;
 }
 
-export function AwaitingReply({since,team}: {since:string;team?:string|null}) {
-  return <div role="alert" data-testid="awaiting-reply" className="rounded-md border-2 border-amber-500 bg-amber-50 p-3 text-sm text-amber-950 dark:bg-amber-950 dark:text-amber-100">
+export function AwaitingReply({since,team,staff=false}: {since:string;team?:string|null;staff?:boolean}) {
+  return <div role={staff?"status":"alert"} data-testid="awaiting-reply" className="rounded-md border-2 border-amber-500 bg-amber-50 p-3 text-sm text-amber-950 dark:bg-amber-950 dark:text-amber-100">
+    {staff ? <><p className="font-semibold">Waiting for the referrer to reply.</p><p>Your latest question was sent {new Date(since).toLocaleString()}.</p></> : <>
     <p className="font-semibold">The {team||"receiving"} team asked for more information.</p>
-    <p>Reply in the box below. They have been waiting since {new Date(since).toLocaleString()}.</p></div>;
+    <p>Reply in the box below. They have been waiting since {new Date(since).toLocaleString()}.</p></>}</div>;
 }
 
 export function QuestionBox({referralId,disabled,onSent}: {referralId:number;disabled?:boolean;onSent:()=>void}) {
@@ -173,7 +174,8 @@ export function UnitRoster({me}: {me:User}) {
   const {data:members=[]}=useQuery<Member[]>({queryKey:[`/api/unit-members?team=${team}`]});
   const key=`/api/unit-roster?team=${team}&day=${day}`;
   const {data:roster}=useQuery<any>({queryKey:[key]});
-  useEffect(()=>{setEntries(roster?roster.entries.map((e:any)=>({userId:e.userId,duty:e.duty})):[]);setSaved(false);},[roster,key]);
+  useEffect(()=>{setEntries(roster?roster.entries.map((e:any)=>({userId:e.userId,duty:e.duty})):[]);},[roster,key]);
+  useEffect(()=>{setSaved(false);},[key]);
   const editable=me.role!=="clinician";
   const dutyOf=(id:number)=>entries.find(e=>e.userId===id)?.duty;
   const toggle=(id:number,on:boolean)=>{setSaved(false);setEntries(x=>on?[...x.filter(e=>e.userId!==id),{userId:id,duty:DEFAULT_DUTY}]:x.filter(e=>e.userId!==id));};

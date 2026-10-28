@@ -103,6 +103,16 @@ tagged with `referrals.referrer_id` so each referrer sees only their own
 consults; patient data of other referrers stays invisible. Referrers see the
 full on-call roster (`/api/referrer/roster`).
 
+## Referral chat, push notifications and who is on duty
+
+**Chat.** Inside a referral the receiving team can ask the referrer for more information (`POST /api/referrals/:id/question`, History & chat tab) and the referrer answers from their consult (signed-in referrers) or the follow-up page. Questions and replies are rows in the same append-only `referral_followups` timeline as updates and advice, so they are audited, included in the administrator's referral export, and deleted by the same retention purge. A question sets `referrals.awaiting_info_at`, which shows "Waiting for referrer" on the queue and a banner on the referrer's side; the referrer's reply, a decline or an advice-only answer clears it. A question does not change the referral's status.
+
+**Who is on duty.** The On call page lists the unit's active accounts. Ticking an account for a date means it is taking consults that day. Today's ticked accounts receive push notifications for every new referral, every referrer follow-up or reply and every waiting-list reminder for the unit. If nobody is ticked, the whole unit is notified. The roster page shows which accounts have no push device. Rosters are by calendar day (South African time) so a night shift that crosses midnight needs both days ticked.
+
+**Escalation.** Notifications go to the rostered accounts straight away. If a new referral is still unopened, or a follow-up is still unread, after the escalation delay (Alerts settings, default 10 minutes), every active member of the unit is notified, then again at each further interval, at most three times. A waiting-list referral notifies at its reminder time and repeats at the reminder interval, reaching the whole unit from the second repeat. The referrer is notified immediately when a question or a decision is posted and reminded after the same delay while a question is unanswered. A single in-process timer runs once a minute; each alert is recorded in `push_sent` first, so a restart or a second process does not send it twice.
+
+**Setup.** Push uses Web Push (VAPID). Generate keys once with `npx web-push generate-vapid-keys` and set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` (`mailto:` an operator address) in the server environment. Without them push is off, `/api/health` reports `push: "not configured"` and the browser toggle explains this. Users turn push on per device from the bell menu (staff) or the consult list (referrers, and the follow-up page for anonymous referrers). Signing out turns it off for that device. Push needs the installed or production build with its service worker and HTTPS; on iPhone the app must be added to the Home Screen first. The server only sends to the push services browsers use (Google, Mozilla, Apple, Microsoft); other endpoints are rejected. Payloads carry the reference, unit and priority only, never patient details. Delivery is best effort and still not a guaranteed emergency channel: keep the P1 alarm and a telephone escalation path.
+
 ## Two phone-app routes
 
 - **Capacitor:** package the existing React web UI in Android/iOS projects, then adapt API routing, notification registration, image capture, authentication storage and external-link handling. Capacitor supports integration with an existing React project ([Capacitor React guide](https://capacitorjs.com/solution/react)).
@@ -112,7 +122,7 @@ Neither route is implemented in this export. There are no `android/` or `ios/` p
 
 ## Safety and operations
 
-Technical access controls do not establish POPIA compliance. Production still needs hospital approval, operator agreements, a documented retention policy, independent tested backups, monitoring and a breach process. The existing browser alerts are not a guaranteed emergency notification service. Confirm P1 acknowledgement and retain a telephone escalation pathway.
+Technical access controls do not establish POPIA compliance. Production still needs hospital approval, operator agreements, a documented retention policy, independent tested backups, monitoring and a breach process. The browser alerts and web push notifications are not a guaranteed emergency notification service. Confirm P1 acknowledgement and retain a telephone escalation pathway.
 
 Rate limits for sign-in, sign-up, status lookup, the follow-up portal and submissions are held in the API process's memory. They assume one API process on one host: a restart resets them and each additional process multiplies the allowance. Add proxy-level or shared-store limits before running more than one instance. Account lockout after five failed sign-ins is stored in the database and is not affected.
 

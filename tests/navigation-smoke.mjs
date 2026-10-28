@@ -247,7 +247,7 @@ try {
     await go("/queue"); await visible(page.getByRole("heading", { name: "All-unit referral desk" }));
     check("Follow-up page sends the code once, then a token; an ended session asks for the code again without signing staff out");
     await page.getByText("QA synthetic consult", { exact: true }).click(); await visible(page.getByTestId("input-advice"));
-    await page.getByRole("tab", { name: "History", exact: true }).click();
+    await page.getByRole("tab", { name: "History & chat", exact: true }).click();
     await page.getByRole("tab", { name: "Images", exact: true }).click();
     await page.getByRole("tab", { name: "Clinical details", exact: true }).click();
     await visible(page.getByText(/Systolic BP: 120 mmHg/));

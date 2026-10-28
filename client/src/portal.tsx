@@ -123,7 +123,7 @@ function Dashboard({ me, onLogout, onRefresh, initialTeam, initialNew }: { me: a
     <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-card p-4"><div className="flex items-center gap-3"><span className="bb-role-icon h-10 w-10"><UserIcon className="h-5 w-5"/></span><div><p className="font-semibold">{me.name}</p><p className="text-xs text-muted-foreground">{[me.specialty, me.profession].filter(Boolean).join(" · ")}</p></div></div>
       <Badge className={verified ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100" : "bg-amber-100 text-amber-900 dark:bg-amber-900 dark:text-amber-100"}>{isAdmin ? "Global administrator" : verified ? "Verified" : "Verification pending"}</Badge>
       <Button size="sm" variant="ghost" className="ml-auto" onClick={onLogout}><LogOut className="h-4 w-4 mr-1" />Sign out</Button>
-      <div className="basis-full space-y-1"><PushToggle target={{kind:"account"}} label="Push notifications for questions and responses" /></div></div>
+      <div className="basis-full space-y-1"><PushToggle target={{kind:"account"}} label="Push alerts for questions and responses" /></div></div>
     {!verified && <><CardUpload me={me} onUploaded={onRefresh} /><Button size="sm" variant="outline" onClick={onRefresh}>Check verification status</Button></>}
     <nav aria-label="Referrer workspace" className="bb-referrer-nav">{([["consults", isAdmin ? "All consults" : "My consults", ClipboardList], ["new", "New consult", Send], ["roster", "On-call roster", CalendarDays]] as const).map(([t, l, I]) =>
       <button key={t} aria-current={tab === t ? "page" : undefined} onClick={() => setTab(t as any)}><I/>{l}</button>)}</nav>
