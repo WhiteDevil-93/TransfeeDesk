@@ -1,7 +1,7 @@
 self.addEventListener("push", (event) => {
   let d = {};
   try { d = event.data ? event.data.json() : {}; } catch (e) { d = {}; }
-  const icon = new URL("icon-192.png", self.registration.scope).href;
+  const icon = new URL("branding/icons/app-teal-192.png", self.registration.scope).href;
   event.waitUntil(self.registration.showNotification(d.title || "BaraBridge", {
     body: d.body || "Open BaraBridge to see what needs attention.",
     tag: d.tag || "barabridge",

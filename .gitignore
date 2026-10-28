@@ -27,3 +27,4 @@ data.db-journal
 
 # Local browser verification evidence
 /artifacts/
+/client/public/branding/

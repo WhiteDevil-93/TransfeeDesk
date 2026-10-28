@@ -34,10 +34,10 @@ import { copyText, useAutoClear } from "./lib/use-auto-clear";
 type Me = User;
 
 const Logo = () => (
-  <svg viewBox="0 0 32 32" width="28" height="28" fill="none" aria-label="BaraBridge logo">
-    <rect x="2" y="2" width="28" height="28" rx="8" stroke="currentColor" strokeWidth="2.5" />
-    <path d="M9 13h11m0 0-3.5-3.5M20 13l-3.5 3.5M23 19H12m0 0 3.5-3.5M12 19l3.5 3.5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
+  <span role="img" aria-label="BaraBridge logo" className="bb-brand-mark">
+    <img className="bb-brand-light" src="/branding/logos/mark-teal.svg" width="28" height="28" alt=""/>
+    <img className="bb-brand-dark" src="/branding/logos/mark-white.svg" width="28" height="28" alt=""/>
+  </span>
 );
 const pColor: Record<string,string> = { P1: "bg-red-600 text-white", P2: "bg-amber-500 text-black", P3: "bg-emerald-600 text-white" };
 const sLabel: Record<Status,string> = { pending: "New", accepted: "Accepted for transfer", declined: "Declined", waiting: "Waiting", advised:"Advice sent" };

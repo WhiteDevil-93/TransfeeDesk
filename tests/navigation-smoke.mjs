@@ -18,6 +18,7 @@ const go = async route => { await page.goto(`${base}/#${route}`); };
 const visible = async locator => { await locator.waitFor({ state: "visible" }); };
 const check = name => { checks.push(name); console.log(`PASS ${name}`); };
 const capture = async name => {
+  await page.waitForFunction(() => [...document.querySelectorAll('.bb-brand-mark img')].every(img => img.complete && img.naturalWidth > 0));
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), `${name}: horizontal overflow`);
   await page.screenshot({ path: path.join(output, `${publicOnly ? "live-" : ""}${name}-viewport.png`), animations: "disabled" });
   await page.evaluate(() => window.scrollTo(0, 0));

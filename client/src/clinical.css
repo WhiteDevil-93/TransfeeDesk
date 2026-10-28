@@ -1,4 +1,8 @@
 /* BaraBridge clinical workspace, based on the approved UX Pilot screens. */
+.bb-brand-mark { display: inline-flex; width: 28px; height: 28px; flex-shrink: 0; }
+.bb-brand-dark { display: none; }
+.bb-staff-header .bb-brand-light, .dark .bb-brand-light { display: none; }
+.bb-staff-header .bb-brand-dark, .dark .bb-brand-dark { display: block; }
 .bb-public-header { background: hsl(var(--card)); }
 .bb-public-nav a { display: inline-flex; align-items: center; min-height: 44px; text-decoration: none; font-weight: 500; }
 .bb-public-nav a:hover { color: hsl(var(--primary)); }

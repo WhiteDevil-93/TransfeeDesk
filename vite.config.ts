@@ -8,7 +8,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["favicon.png", "icon-192.png", "icon-512.png"],
+      includeAssets: ["branding/icons/favicon.ico"],
       manifest: {
         name: "BaraBridge",
         short_name: "BaraBridge",
@@ -21,18 +21,20 @@ export default defineConfig({
         scope: "/",
         display: "standalone",
         orientation: "portrait",
-        theme_color: "#0284c7",
+        theme_color: "#0B7F75",
         background_color: "#ffffff",
         icons: [
-          { src: "icon-192.png", sizes: "192x192", type: "image/png" },
-          { src: "icon-512.png", sizes: "512x512", type: "image/png" },
+          { src: "branding/icons/app-teal-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+          { src: "branding/icons/app-teal-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+          { src: "branding/icons/maskable.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
         ],
       },
       workbox: {
         importScripts: ["push-sw.js"],
         globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
+        globIgnores: ["branding/wallpapers/**", "branding/source/**", "branding/social/**"],
         navigateFallback: "/index.html",
-        navigateFallbackDenylist: [/^\/api\//],
+        navigateFallbackDenylist: [/^\/api\//, /^\/branding(?:\/|$)/],
         runtimeCaching: [
           { urlPattern: /^\/api\//, handler: "NetworkOnly" },
         ],
