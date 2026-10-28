@@ -341,7 +341,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     catch (e: any) { if (e.message.includes("image") || e.message.includes("JPEG")) return res.status(400).json({ message: e.message }); throw e; }
     await audit(req, "referral_followup", r.id, "Referrer submitted clinical update"); res.json({ ok: true });
   }));
-  app.get("/api/referrer/roster", REF, referrerWorkspace, (req: AuthReq, res) => {
+  // The roster lists on-call clinicians' direct numbers, so it is only for
+  // verified referrers (and the global administrator).
+  const verifiedReferrer = (req: AuthReq, res: Response, next: NextFunction) => {
+    if (req.user?.role === "admin" || req.user?.verifyStatus === "verified") return next();
+    res.status(403).json({ message: "Your account must be verified before you can view the on-call roster." });
+  };
+  app.get("/api/referrer/roster", REF, referrerWorkspace, verifiedReferrer, (req: AuthReq, res) => {
     const date = String(req.query.date || saToday());
     res.json({ hospital: loadRoster()?.hospital, generated: loadRoster()?.generated, date, specs: rosterFor(date, req.query.spec ? String(req.query.spec) : undefined) });
   });
