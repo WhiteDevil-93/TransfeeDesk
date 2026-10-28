@@ -5,12 +5,14 @@ import { db, verifyPw, isUniqueViolation } from "./db";
 import { geocode } from "./geocode";
 import { catchmentAt } from "./catchment";
 import { facilityLocation } from "../shared/location";
-import { referralInput, decisionInput, followupInput, imageInput } from "@shared/schema";
+import { referralInput, decisionInput, followupInput, imageInput, questionInput, pushSubscriptionInput } from "@shared/schema";
 import { TEAMS, canAccess, canManage, type Team } from "@shared/teams";
 import { z } from "zod";
 import { appendChecklistSurnames, searchIRegister } from "../script/hpcsa-scrape";
 import { hpcsaIdentityMatches, normalizeHpcsaNumber } from "./hpcsa-verification";
 import { issuePortalToken, portalFingerprint, readPortalToken } from "./portal-session";
+import { notifyFollowup, notifyNewReferral, notifyQuestion, notifyResponse, saToday } from "./notify";
+import { allowedPushEndpoint, pushEnabled, pushPublicKey } from "./push";
 
 // Surname that a new unverified referrer needs in the register. Added to the
 // checklist so the scheduled refresh covers it, AND fetched immediately (when
@@ -85,7 +87,6 @@ function loadRoster(): any {
   return rosterCache?.data; // last good parse, or undefined
 }
 function rosterSpecs(): any[] { return loadRoster()?.specialties || []; }
-const saToday = () => new Date(Date.now() + 2 * 3600e3).toISOString().slice(0, 10);
 function rosterFor(date: string, spec?: string) {
   return rosterSpecs().filter(s => !spec || s.id === spec).map(s => {
     const cmap: Record<string, any> = {}; (s.contacts || []).forEach((c: any) => cmap[c.id] = c);
@@ -200,6 +201,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       throw e;
     }
     await audit(req, "referral_submitted", r.id, `${r.ref} from ${p.data.hospital} (${req.user.role})`);
+    void notifyNewReferral(r);
     res.json({ ref: r.ref, followupCode:(r as any).followupCode });
   }));
   // Status lookup needs the reference AND the referring cellphone number; returns only coarse status.
@@ -214,7 +216,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/portal",wrap(async(req,res)=>{
     const access=await portal(req,res); if(!access) return; const r=access.referral;
     res.json({portalToken:access.token,portalExpiresAt:access.expiresAt,ref:r.ref,team:r.team,consultType:r.consultType,status:r.status,priority:r.priority,
-      openedAt:r.openedAt,openedBy:r.openedBy,decidedBy:r.decidedBy,decidedAt:r.decidedAt,
+      openedAt:r.openedAt,openedBy:r.openedBy,decidedBy:r.decidedBy,decidedAt:r.decidedAt,awaitingInfoAt:r.awaitingInfoAt??null,
       bedStatus:r.bedStatus,bedWard:r.bedWard,decisionNote:r.decisionNote,
       timeline:await db.timeline(r.id),images:(await db.images(r.id)).filter(im=>!im.followupId)});
   }));
@@ -222,10 +224,25 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if(limit("followup:"+ipOf(req),20,3600e3)) return res.status(429).json({message:"Too many updates"});
     const p=followupInput.safeParse(req.body); if(!p.success) return res.status(400).json({message:"Enter an update and up to 3 images"});
     const access=await portal(req,res); if(!access) return; const r=access.referral;
-    try { await db.append(r.id,r.doctorName,null,"update",p.data.body,p.data.images); }
+    const replying=!!r.awaitingInfoAt;
+    try { await db.append(r.id,r.doctorName,null,replying?"reply":"update",p.data.body,p.data.images); }
     catch(e:any) { if(e.message.includes("image") || e.message.includes("JPEG")) return res.status(400).json({message:e.message}); throw e; }
-    await db.audit({action:"referral_followup",referralId:r.id,detail:"Referrer submitted clinical update",ip:ipOf(req)});
+    await db.audit({action:"referral_followup",referralId:r.id,detail:replying?"Referrer replied to the team's question":"Referrer submitted clinical update",ip:ipOf(req)});
+    void notifyFollowup(r);
     res.json({ok:true});
+  }));
+  app.post("/api/portal/push",wrap(async(req,res)=>{
+    const p=pushSubscriptionInput.safeParse(req.body); if(!p.success||!allowedPushEndpoint(p.data.subscription.endpoint)) return res.status(400).json({message:"This browser's push subscription is not supported"});
+    if(!pushEnabled()) return res.status(503).json({message:"Push notifications are not configured on this server"});
+    const access=await portal(req,res); if(!access) return;
+    const {endpoint,keys}=p.data.subscription;
+    await db.savePushSub({endpoint,p256dh:keys.p256dh,auth:keys.auth},{referralId:access.referral.id});
+    res.json({ok:true});
+  }));
+  app.delete("/api/portal/push",wrap(async(req,res)=>{
+    const endpoint=String(req.body?.endpoint||""); if(!endpoint||endpoint.length>1000) return res.status(400).json({message:"Choose a subscription to remove"});
+    const access=await portal(req,res); if(!access) return;
+    await db.removePushSub(endpoint,{referralId:access.referral.id}); res.json({ok:true});
   }));
   app.post("/api/portal/image/:imageId",wrap(async(req,res)=>{
     const access=await portal(req,res); if(!access) return; const r=access.referral;
@@ -251,6 +268,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.get("/api/me", A, wrap(async (req, res) => {
     res.json({ user: req.user });
+  }));
+
+  /* ----- push notifications ----- */
+  app.get("/api/push/key", (_req, res) => res.json({ enabled: pushEnabled(), publicKey: pushPublicKey() }));
+  app.post("/api/push/subscribe", A, wrap(async (req, res) => {
+    const p = pushSubscriptionInput.safeParse(req.body); if (!p.success || !allowedPushEndpoint(p.data.subscription.endpoint)) return res.status(400).json({ message: "This browser's push subscription is not supported" });
+    if (!pushEnabled()) return res.status(503).json({ message: "Push notifications are not configured on this server" });
+    if (limit("push:" + req.user.id, 30, 3600e3)) return res.status(429).json({ message: "Too many requests" });
+    const { endpoint, keys } = p.data.subscription;
+    await db.savePushSub({ endpoint, p256dh: keys.p256dh, auth: keys.auth }, { userId: req.user.id });
+    await audit(req, "push_enabled"); res.json({ ok: true });
+  }));
+  app.delete("/api/push/subscribe", A, wrap(async (req, res) => {
+    const endpoint = String(req.body?.endpoint || ""); if (!endpoint || endpoint.length > 1000) return res.status(400).json({ message: "Choose a subscription to remove" });
+    await db.removePushSub(endpoint, { userId: req.user.id }); await audit(req, "push_disabled"); res.json({ ok: true });
   }));
 
   /* ----- referrer self-service (the referral PWA) ----- */
@@ -373,9 +405,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (limit("referrer-followup:" + req.user.id, 20, 3600e3)) return res.status(429).json({ message: "Too many updates" });
     const p = followupInput.omit({ ref: true, code: true }).safeParse(req.body);
     if (!p.success) return res.status(400).json({ message: "Enter an update and up to 3 images" });
-    try { await db.append(r.id, req.user.name, req.user.id, "update", p.data.body, p.data.images); }
+    const replying = !!r.awaitingInfoAt;
+    try { await db.append(r.id, req.user.name, req.user.id, replying ? "reply" : "update", p.data.body, p.data.images); }
     catch (e: any) { if (e.message.includes("image") || e.message.includes("JPEG")) return res.status(400).json({ message: e.message }); throw e; }
-    await audit(req, "referral_followup", r.id, "Referrer submitted clinical update"); res.json({ ok: true });
+    await audit(req, "referral_followup", r.id, replying ? "Referrer replied to the team's question" : "Referrer submitted clinical update");
+    void notifyFollowup(r); res.json({ ok: true });
   }));
   // The roster lists on-call clinicians' direct numbers, so it is only for
   // verified referrers (and the global administrator).
@@ -439,12 +473,24 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const {status,decisionNote,decidedBy,remindAt,...rest}=d;
       if(Object.keys(rest).length) await db.update(cur.id,rest);
       r=await db.respond(cur.id,status,decisionNote ?? cur.decisionNote ?? "",req.user.name,req.user.id,remindAt ?? cur.remindAt ?? null);
+      if(r && status!=="pending") void notifyResponse(r);
     } else r=await db.update(cur.id,d);
     if(!r) return res.status(404).end();
     await audit(req, "update_referral", r.id, Object.keys(d).map(k => `${k}=${k === "decisionNote" ? "(note)" : d[k]}`).join(", ") + (d.ack !== undefined && ackVia ? ` ackVia=${ackVia}` : ""));
     res.json(r);
   }));
   app.post("/api/referrals/:id/shared", A, wrap(async (req, res) => { if(!await findCase(req,res)) return; await audit(req, "shared_whatsapp", Number(req.params.id), "WhatsApp draft opened"); res.json({ ok: true }); }));
+  app.post("/api/referrals/:id/question", A, wrap(async (req, res) => {
+    const r = await findCase(req, res); if (!r) return;
+    if (r.purgedAt) return res.status(410).json({ message: "Clinical record has expired" });
+    if (limit("question:" + req.user.id, 60, 3600e3)) return res.status(429).json({ message: "Too many messages" });
+    const p = questionInput.safeParse(req.body); if (!p.success) return res.status(400).json({ message: "Type the question for the referrer (2 to 2000 characters)" });
+    await db.append(r.id, req.user.name, req.user.id, "question", p.data.body);
+    if (!r.ackAt) await db.update(r.id, { ack: req.user.name });
+    await audit(req, "referral_question", r.id, "Asked the referrer for more information");
+    void notifyQuestion(r);
+    res.json({ ok: true });
+  }));
   app.get("/api/referrals/:id/images/:imageId",A,wrap(async(req,res)=>{
     const r=await findCase(req,res); if(!r) return;
     const im=await db.image(Number(req.params.imageId),r.id); if(!im) return res.status(404).end();
@@ -481,7 +527,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/unit-members",A,wrap(async(req,res)=>{
     const team=String(req.query.team||req.user.team);
     if(!TEAMS.includes(team as Team)||!canAccess(req.user,team)) return res.status(403).json({message:"Unit not accessible"});
-    res.json((await db.users()).filter(u=>u.active&&u.team===team).map(u=>({id:u.id,name:u.name,team:u.team,role:u.role,phone:u.phone})));
+    const members=(await db.users()).filter(u=>u.active&&u.team===team);
+    const devices=await db.pushDeviceCounts(members.map(u=>u.id));
+    res.json(members.map(u=>({id:u.id,name:u.name,team:u.team,role:u.role,phone:u.phone,pushDevices:devices[u.id]||0})));
   }));
   app.put("/api/unit-roster",...MANAGER,wrap(async(req,res)=>{
     const p=z.object({team:z.enum(TEAMS),day:z.string().regex(/^\d{4}-\d{2}-\d{2}$/),entries:z.array(z.object({userId:z.number().int().positive(),duty:z.string().min(1).max(100)})).max(30)}).safeParse(req.body);
@@ -497,7 +545,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   /* ----- admin ----- */
   app.put("/api/settings", ADMIN, wrap(async (req, res) => {
     const b = req.body || {}; const v: any = {};
-    for (const k of ["p1", "p2", "p3", "repeat", "retentionDays"]) if (b[k] !== undefined) v[k] = Math.max(1, Math.min(3650, Number(b[k]) || 1));
+    for (const k of ["p1", "p2", "p3", "repeat", "escalate", "retentionDays"]) if (b[k] !== undefined) v[k] = Math.max(1, Math.min(3650, Number(b[k]) || 1));
     if (b.sound !== undefined) v.sound = !!b.sound;
     for (const k of ["responsibleParty", "infoOfficer", "infoOfficerEmail", "infoOfficerPhone"]) if (b[k] !== undefined) v[k] = String(b[k]).slice(0, 200);
     const n = await db.saveSettings(v); await audit(req, "settings_changed", null, Object.keys(v).join(", ")); res.json(n);

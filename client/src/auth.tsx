@@ -4,6 +4,7 @@ import type { User } from "@shared/schema";
 import { API_BASE, apiRequest, queryClient, session } from "./lib/queryClient";
 import { dismissToasts } from "@/hooks/use-toast";
 import { browserTokenStore } from "./lib/token-store";
+import { releaseDevice } from "./push";
 
 const tokens = browserTokenStore();
 tokens.dropLegacy();
@@ -49,7 +50,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
   const signOut: AuthState["signOut"] = async (destination = "/") => {
     const token = session.token;
+    const released = token ? releaseDevice(token) : Promise.resolve();
     clearTokens(); dismissToasts(); session.token = ""; setUser(null); setExpired(false); setRestoreError(""); setAttempt(x => x + 1); queryClient.clear(); navigate(destination);
+    await released;
     if (token) await fetch(`${API_BASE}/api/me/logout`, { method: "POST", headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
   };
   const refreshUser = async () => {

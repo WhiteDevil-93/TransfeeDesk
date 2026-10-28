@@ -56,6 +56,7 @@ For a new, separate development database, apply the SQL files in this order (or 
 4. `supabase/migration_hpcsa.sql` — the `hpcsa_register` table (HPCSA iRegister snapshot, see below)
 5. `supabase/migration_referrers.sql` — referrer role, profile columns and verification state
 6. `supabase/migration_integrity.sql` — `referrals.loc_source`, purged-referral follow-up guard, normalized HPCSA numbers and unique account emails. Existing databases need this file too.
+7. `supabase/migration_chat_push.sql` — referral chat (`question` and `reply` messages, `referrals.awaiting_info_at`) and push notification tables. The server reads the new column, so apply this before deploying this version.
 
 `migration.sql` creates no access policies, so the API roles are denied everything until the lockdown migration runs. Do not expose the service until the lockdown migration is complete; `tests/migrations.test.ts` checks that every column the queue reads is created by these files. The legacy `npm run db:push` entry is inherited from the template and is not this app's migration mechanism; use the SQL files above.
 

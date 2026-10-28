@@ -38,6 +38,9 @@ $PSQL < supabase/migration_referrers.sql
 echo "== migration_integrity.sql (loc_source, purge guards, unique email) =="
 $PSQL < supabase/migration_integrity.sql
 
+echo "== migration_chat_push.sql (referral chat, push subscriptions, purge update) =="
+$PSQL < supabase/migration_chat_push.sql
+
 echo "== seed owner (global admin) =="
 # scrypt hash of the owner password, same algorithm as server/db.ts.
 HASH="$(node -e '
@@ -55,5 +58,5 @@ SQL
 
 echo "== verify =="
 $PSQL -tAc "select 'users='||count(*) from users;"
-$PSQL -tAc "select 'policies='||count(*) from pg_policies where tablename in ('users','sessions','referrals','referral_followups','referral_images','unit_rosters','audit_log','settings','hpcsa_register');"
+$PSQL -tAc "select 'policies='||count(*) from pg_policies where tablename in ('users','sessions','referrals','referral_followups','referral_images','unit_rosters','push_subscriptions','push_sent','audit_log','settings','hpcsa_register');"
 echo "Done. Local DB is ready at http://127.0.0.1:54321"

@@ -5,6 +5,8 @@ import type { Referral, ReferralInput, Doctor, User, AuditRow, AppSettings, Foll
 import { type Team } from "@shared/teams";
 import { normalizeHpcsaNumber } from "./hpcsa-verification";
 
+export type PushSub = { endpoint: string; p256dh: string; auth: string };
+
 if(!process.env.APP_DB_SECRET || process.env.APP_DB_SECRET.length<32) throw new Error("Server database secret is not configured");
 export const sb = createClient(process.env.SUPABASE_URL!, (process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY)!, { auth: { persistSession: false }, realtime: { transport: ws as any }, global: { headers: { "x-app-secret": process.env.APP_DB_SECRET || "" } } });
 const snake = (k: string) => k.replace(/[A-Z]/g, (c) => "_" + c.toLowerCase());
@@ -13,7 +15,7 @@ const toCamel = (o: any) => o && Object.fromEntries(Object.entries(o).map(([k, v
 const toSnake = (o: any) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined).map(([k, v]) => [snake(k), v]));
 function chk<T>(r: { data: T; error: any }): T { if (r.error) throw new Error(r.error.message); return r.data; }
 
-export const defaults: AppSettings = { p1: 5, p2: 30, p3: 120, repeat: 5, sound: true, retentionDays: 90,
+export const defaults: AppSettings = { p1: 5, p2: 30, p3: 120, repeat: 5, escalate: 10, sound: true, retentionDays: 90,
   responsibleParty: "Chris Hani Baragwanath Academic Hospital", infoOfficer: "", infoOfficerEmail: "", infoOfficerPhone: "" };
 
 /* ---------- passwords & sessions ---------- */
@@ -53,7 +55,7 @@ export function encryptImages(images:any[]) {
   });
 }
 
-export const REFERRAL_QUEUE_COLUMNS = "id,ref,team,consult_type,opened_at,opened_by,latest_followup_at,followup_seen_at,created_at,doctor_name,hospital,department,phone,specialty,current_location,bed_needed,patient_initials,age,sex,diagnosis,reason,suggested_priority,priority,status,decided_by,decided_at,bed_status,bed_ward,remind_at,ack_by,ack_at,purged_at,lat,lon,loc_source";
+export const REFERRAL_QUEUE_COLUMNS = "id,ref,team,consult_type,opened_at,opened_by,latest_followup_at,followup_seen_at,created_at,doctor_name,hospital,department,phone,specialty,current_location,bed_needed,patient_initials,age,sex,diagnosis,reason,suggested_priority,priority,status,decided_by,decided_at,bed_status,bed_ward,remind_at,ack_by,ack_at,purged_at,awaiting_info_at,lat,lon,loc_source";
 
 const AUDIT_QUEUE_MAX = 500;
 const auditQueue: Record<string, unknown>[] = [];
@@ -234,6 +236,10 @@ export const db = {
     const users=await this.users();
     return {...r,entries:r.entries.map((e:any)=>({...e,name:users.find(u=>u.id===e.userId)?.name||"Former team member",phone:users.find(u=>u.id===e.userId)?.phone||""}))};
   },
+  async rosterUserIds(team:Team,day:string):Promise<number[]> {
+    const r:any=chk(await sb.from("unit_rosters").select("entries").eq("team",team).eq("day",day).maybeSingle());
+    return (r?.entries||[]).map((e:any)=>Number(e.userId)).filter((id:number)=>Number.isInteger(id)&&id>0);
+  },
   async saveRoster(team:Team,day:string,entries:any[],name:string) { return chk(await sb.from("unit_rosters").upsert({team,day,entries,updated_by:name,updated_at:new Date().toISOString()})); },
   async update(id: number, u: Record<string, any>) {
     const cur: any = await this.get(id); if (!cur) return undefined;
@@ -253,6 +259,49 @@ export const db = {
     const m = new Map<string, Doctor>();
     for (const r of rows) { const k = r.phone; const d = m.get(k); if (d) { d.count++; if (!d.email && r.email) d.email = r.email; } else m.set(k, { doctorName: r.doctor_name, hospital: r.hospital, department: r.department, phone: r.phone, email: r.email || "", count: 1, last: r.created_at }); }
     return Array.from(m.values());
+  },
+
+  /* push notifications */
+  async savePushSub(sub:{endpoint:string;p256dh:string;auth:string},owner:{userId:number}|{referralId:number}) {
+    const row={endpoint:sub.endpoint,p256dh:sub.p256dh,auth:sub.auth,user_id:"userId" in owner?owner.userId:null,referral_id:"referralId" in owner?owner.referralId:null};
+    chk(await sb.from("push_subscriptions").upsert(row,{onConflict:"endpoint"}));
+  },
+  async removePushSub(endpoint:string,owner?:{userId:number}|{referralId:number}) {
+    let q=sb.from("push_subscriptions").delete().eq("endpoint",endpoint);
+    if(owner) q="userId" in owner?q.eq("user_id",owner.userId):q.eq("referral_id",owner.referralId);
+    chk(await q);
+  },
+  async pushSubsForUsers(ids:number[]):Promise<PushSub[]> {
+    if(!ids.length) return [];
+    return chk(await sb.from("push_subscriptions").select("endpoint,p256dh,auth").in("user_id",ids)) as PushSub[];
+  },
+  async pushSubsForReferral(id:number):Promise<PushSub[]> {
+    return chk(await sb.from("push_subscriptions").select("endpoint,p256dh,auth").eq("referral_id",id)) as PushSub[];
+  },
+  async pushDeviceCounts(ids:number[]):Promise<Record<number,number>> {
+    if(!ids.length) return {};
+    const rows=chk(await sb.from("push_subscriptions").select("user_id").in("user_id",ids)) as any[];
+    return rows.reduce((m:Record<number,number>,r)=>{m[r.user_id]=(m[r.user_id]||0)+1;return m;},{});
+  },
+  // True only for the caller that recorded the key; a repeat or a second server gets false.
+  async claimPush(key:string):Promise<boolean> {
+    const r=await sb.from("push_sent").insert({key});
+    if(!r.error) return true;
+    if(isUniqueViolation(r.error)) return false;
+    throw new Error(r.error.message);
+  },
+  async prunePushSent(days:number) { chk(await sb.from("push_sent").delete().lt("sent_at",new Date(Date.now()-days*86400e3).toISOString())); },
+  async pushDue(since:string,waitingSince:string,now:string) {
+    const cols="id,ref,team,priority,status,created_at,opened_at,ack_at,latest_followup_at,followup_seen_at,remind_at,awaiting_info_at,referrer_id";
+    const base=()=>sb.from("referrals").select(cols).is("purged_at",null);
+    const [unattended,followups,questions,waiting]=await Promise.all([
+      base().eq("status","pending").is("opened_at",null).is("ack_at",null).gte("created_at",since).lte("created_at",now),
+      base().gte("latest_followup_at",since).lte("latest_followup_at",now),
+      base().gte("awaiting_info_at",since).lte("awaiting_info_at",now),
+      base().eq("status","waiting").gte("remind_at",waitingSince).lte("remind_at",now),
+    ]);
+    const rows=(r:any)=>(chk(r) as any[]).map(toCamel);
+    return {unattended:rows(unattended),followups:rows(followups).filter((r:any)=>!r.followupSeenAt||r.latestFollowupAt>r.followupSeenAt),questions:rows(questions),waiting:rows(waiting)};
   },
 
   /* audit */
