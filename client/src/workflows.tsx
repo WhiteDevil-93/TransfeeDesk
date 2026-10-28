@@ -74,12 +74,16 @@ export function Timeline({entries,referralId,portalToken,imageBase}: {entries?:F
   </Card>)}</div>;
 }
 
-export function AwaitingReply({since,team,staff=false}: {since:string;team?:string|null;staff?:boolean}) {
+export function AwaitingReply({since,team,staff=false,question}: {since:string;team?:string|null;staff?:boolean;question?:string}) {
+  const mins=Math.max(0,Math.round((Date.now()-new Date(since).getTime())/60000)), waited=mins<60?`${mins} min`:`${Math.floor(mins/60)} h ${mins%60} min`;
   return <div role={staff?"status":"alert"} data-testid="awaiting-reply" className="rounded-md border-2 border-amber-500 bg-amber-50 p-3 text-sm text-amber-950 dark:bg-amber-950 dark:text-amber-100">
-    {staff ? <><p className="font-semibold">Waiting for the referrer to reply.</p><p>Your latest question was sent {new Date(since).toLocaleString()}.</p></> : <>
-    <p className="font-semibold">The {team||"receiving"} team asked for more information.</p>
+    {staff ? <><p className="font-semibold">Waiting for the referrer to reply: {waited} since your question.</p><p>Sent {new Date(since).toLocaleString()}.</p></> : <>
+    <p className="font-semibold">The {team||"receiving"} team asked for more information ({waited} ago).</p>
+    {question&&<blockquote className="my-1 whitespace-pre-wrap border-l-4 border-amber-500 pl-2 italic">{question}</blockquote>}
     <p>Reply in the box below. They have been waiting since {new Date(since).toLocaleString()}.</p></>}</div>;
 }
+
+export const lastQuestion=(t?:Followup[])=>[...(t||[])].reverse().find(e=>e.kind==="question")?.body;
 
 export function QuestionBox({referralId,disabled,onSent}: {referralId:number;disabled?:boolean;onSent:()=>void}) {
   const [body,setBody]=useState(""),[busy,setBusy]=useState(false),[err,setErr]=useState(""),[sent,setSent]=useState(false);
@@ -91,7 +95,7 @@ export function QuestionBox({referralId,disabled,onSent}: {referralId:number;dis
   return <form onSubmit={send} className="space-y-2 rounded-xl border border-amber-300 bg-amber-50/60 p-4 dark:bg-amber-950/30">
     <Label htmlFor="chat-question">Ask the referrer for more information</Label>
     <Textarea id="chat-question" value={body} onChange={e=>{setBody(e.target.value);setSent(false);}} rows={3} maxLength={2000} placeholder="What do you need to know? e.g. latest observations, ECG, bloods, current treatment" data-testid="input-question" disabled={disabled}/>
-    <p className="text-xs text-muted-foreground">The referrer is notified straight away and again if they have not replied. The question and their reply stay on this referral and are kept under the same retention rules.</p>
+    <p className="text-xs text-muted-foreground">The referrer is notified straight away and again if they have not replied. The chat is permanently saved in the referral record and kept under the same retention rules.</p>
     <Button disabled={disabled||busy||body.trim().length<2} data-testid="button-send-question">{busy?"Sending…":"Send question"}</Button>
     {sent&&<p role="status" className="text-sm text-primary">Question sent. The referral shows as waiting for the referrer's reply.</p>}
     {err&&<p role="alert" className="text-sm text-destructive">{err}</p>}
@@ -153,7 +157,7 @@ export function ReferrerPortal({initialRef="",initialCode=""}: {initialRef?:stri
         {data.decidedBy && <p className="text-xs text-muted-foreground">Responded by {data.decidedBy}, {new Date(data.decidedAt).toLocaleString()}</p>}
         <p className="text-xs text-muted-foreground">An opened receipt does not mean the referral has been accepted. This page refreshes every 20 seconds; browser notifications require it to remain open. The session ends after 30 minutes without a refresh, and you then enter the code again.</p>
       </Card>
-      {data.awaitingInfoAt && <AwaitingReply since={data.awaitingInfoAt} team={data.team}/>}
+      {data.awaitingInfoAt && <AwaitingReply since={data.awaitingInfoAt} team={data.team} question={lastQuestion(data.timeline)}/>}
       <Images images={data.images} portalToken={token} /><Timeline entries={data.timeline} portalToken={token} />
       <Card className="p-4"><form onSubmit={submit} className="space-y-3"><Label htmlFor="portal-followup">{data.awaitingInfoAt?"Reply to the team's question":"Follow-up / new clinical information"}</Label>
         <Textarea id="portal-followup" value={body} onChange={e=>setBody(e.target.value)} rows={4} minLength={2} maxLength={5000} required placeholder="New examination findings, investigations, deterioration or a follow-up question" data-testid="input-followup" />
@@ -203,10 +207,11 @@ export function UnitRoster({me}: {me:User}) {
       <label className="flex min-h-11 min-w-52 cursor-pointer items-center gap-3"><Checkbox checked={on} onCheckedChange={v=>toggle(m.id,v===true)} aria-label={`${m.name} is taking consults`} data-testid={`roster-member-${m.id}`}/><span className="font-medium">{m.name}</span><span className="text-xs text-muted-foreground">{ROLE_LABEL[m.role]||m.role}</span></label>
       {on && <Input className="h-11 flex-1 min-w-40" value={duty} aria-label={`Duty for ${m.name}`} placeholder="Duty (e.g. consultant, night registrar)" onChange={ev=>setDuty(m.id,ev.target.value)}/>}
       <span className={`text-sm ${m.pushDevices?"text-emerald-700":"text-amber-700"}`}>{m.pushDevices?`Push on · ${m.pushDevices} device${m.pushDevices>1?"s":""}`:"No push device"}</span>
+      {on && !m.pushDevices && <span role="status" className="w-full rounded bg-amber-100 px-2 py-1 text-sm text-amber-950">Notifications are off for {m.name}. Phone them: they are only alerted while the desk is open.</span>}
       {m.phone&&<a className="inline-flex min-h-11 items-center px-2 text-sm underline" href={`tel:${m.phone}`}>Call {m.name}</a>}
     </div>;})}</div>
     {former.map(e=><div key={e.userId} className="flex flex-wrap items-center gap-2 rounded-md border border-dashed p-2 text-sm"><span>A former team member is still on this roster.</span><Button size="sm" className="min-h-11" variant="ghost" onClick={()=>toggle(e.userId,false)}>Remove</Button></div>)}
-    {onDuty.length>0 && unreachable.length>0 && <p role="status" className="text-xs text-amber-800">{unreachable.map(m=>m.name).join(", ")} {unreachable.length>1?"have":"has"} not turned on push notifications and will only be alerted while the desk is open. They can turn it on from the bell in the top bar.</p>}
+    {onDuty.length>0 && unreachable.length>0 && <p role="status" className="text-sm text-amber-800">{unreachable.length} ticked {unreachable.length>1?"people have":"person has"} not turned on push. They can turn it on from the bell in the top bar.</p>}
     {members.length>0 && <div className="flex gap-2 items-center flex-wrap"><Button className="min-h-11" onClick={save} disabled={busy} data-testid="button-save-roster">{busy?"Saving…":"Save who is taking consults"}</Button>{!entries.length && <span className="text-xs text-muted-foreground">Nobody ticked: the whole unit will be notified.</span>}{saved&&<span role="status" className="text-sm text-primary">Saved</span>}</div>}
   </> : <>
     {!entries.length && <p className="text-sm text-muted-foreground">No unit roster entries for this date.</p>}
