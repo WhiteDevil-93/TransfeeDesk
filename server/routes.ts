@@ -42,16 +42,24 @@ async function queueSurnameForRefresh(fullName: string) {
   }
 }
 
-const referrerProfile = z.object({
+const profileFields = {
   name: z.string().min(2).max(100),
   email: z.string().email().max(100),
   phone: z.string().min(9).max(30),
-  hospital: z.string().max(100).optional().default(""),
-  department: z.string().max(100).optional().default(""),
+  hospital: z.string().max(100),
+  department: z.string().max(100),
   specialty: z.string().min(1).max(100),
   profession: z.enum(["doctor", "nurse", "other"]),
-  hpcsa: z.string().max(30).optional().default(""),
+  hpcsa: z.string().max(30),
+};
+const referrerProfile = z.object({
+  ...profileFields,
+  hospital: profileFields.hospital.optional().default(""),
+  department: profileFields.department.optional().default(""),
+  hpcsa: profileFields.hpcsa.optional().default(""),
 });
+// Updates must not inherit sign-up defaults: a phone-only change would otherwise blank the HPCSA number.
+const referrerProfileUpdate = z.object(profileFields).partial();
 
 // The roster is a hand/AI-regenerated file (an agent rewrites it from the monthly
 // CHBAH PDFs). It's read fresh on each request (cached only by mtime) so dropping in
@@ -269,11 +277,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           const identityMatches = hpcsaIdentityMatches(d.name, hpcsa, byNum);
           if (identityMatches) { verifyStatus = "verified"; autoApproved = true; }
           else { verifyStatus = "card_pending"; queueSurnameForRefresh(d.name); }
-          audit(req, "hpcsa_check", null, `num=${hpcsa} status=${status || "n/a"} identityMatch=${identityMatches}`);
+          await audit(req, "hpcsa_check", null, `num=${hpcsa} status=${status || "n/a"} identityMatch=${identityMatches}`);
         } else {
           verifyStatus = "card_pending";
           queueSurnameForRefresh(d.name);
-          audit(req, "hpcsa_check", null, `num=${hpcsa} not found`);
+          await audit(req, "hpcsa_check", null, `num=${hpcsa} not found`);
         }
       } else {
         queueSurnameForRefresh(d.name);
@@ -298,21 +306,36 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     });
   }));
   app.post("/api/referrer/profile", REF, isReferrer, wrap(async (req, res) => {
-    const p = referrerProfile.partial().safeParse(req.body || {});
+    const p = referrerProfileUpdate.safeParse(req.body || {});
     if (!p.success) return res.status(400).json({ message: "Invalid profile fields" });
     const emailTaken = () => res.status(409).json({ message: "Another account already uses that email address" });
     if (p.data.email !== undefined && await db.emailTaken(p.data.email, req.user.id)) return emailTaken();
+    const before = req.user;
     let u;
     try { u = await db.updateReferrer(req.user.id, p.data); }
     catch (e) { if (isUniqueViolation(e)) return emailTaken(); throw e; }
-    if (p.data.hpcsa !== undefined && normalizeHpcsaNumber(p.data.hpcsa) && u?.verifyStatus !== "verified") {
-      const hits = await db.hpcsaLookup(req.user.name, p.data.hpcsa);
-      const match = hits.rows.find(r => hpcsaIdentityMatches(req.user.name, p.data.hpcsa!, r));
-      if (match) await db.approveReferrer(req.user.id, req.user.name);
-      else queueSurnameForRefresh(req.user.name);
+    const name = u?.name ?? before.name, number = normalizeHpcsaNumber(u?.hpcsaNumber ?? "");
+    const sameName = (a: string, b: string) => a.trim().replace(/\s+/g, " ").toLowerCase() === b.trim().replace(/\s+/g, " ").toLowerCase();
+    const identityChanged = (p.data.name !== undefined && !sameName(p.data.name, before.name)) ||
+      (p.data.hpcsa !== undefined && normalizeHpcsaNumber(p.data.hpcsa) !== normalizeHpcsaNumber(before.hpcsaNumber || ""));
+    let reverify = false;
+    if (identityChanged && number) {
+      let match = false;
+      try { const hits = await db.hpcsaLookup(name, number); match = hits.rows.some(r => hpcsaIdentityMatches(name, number, r)); }
+      catch (e: any) { await audit(req, "hpcsa_check", null, `lookup error: ${e?.message}`); }
+      if (before.verifyStatus === "verified") {
+        // Verification belongs to the identity that was checked. A new name or
+        // number stays verified only if the register confirms it.
+        if (!match) { await db.demoteReferrer(req.user.id); reverify = true; queueSurnameForRefresh(name); }
+      } else if (match) await db.approveReferrer(req.user.id, req.user.name);
+      else queueSurnameForRefresh(name);
+    } else if (identityChanged && before.verifyStatus === "verified") {
+      await db.demoteReferrer(req.user.id); reverify = true; queueSurnameForRefresh(name);
     }
-    await db.audit({ userId: req.user.id, userName: req.user.name, action: "referrer_profile_updated", ip: ipOf(req) });
-    res.json({ ok: true });
+    await db.audit({ userId: req.user.id, userName: req.user.name, action: reverify ? "referrer_reverify_required" : "referrer_profile_updated", ip: ipOf(req) });
+    res.json(reverify
+      ? { ok: true, reverify: true, message: "Your name or HPCSA number changed and could not be confirmed against the register, so your account is back in the verification queue. Upload your staff card if you have not already." }
+      : { ok: true });
   }));
   app.post("/api/referrer/card", REF, isReferrer, wrap(async (req, res) => {
     const img = imageInput.safeParse(req.body?.image);

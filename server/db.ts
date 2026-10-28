@@ -90,6 +90,9 @@ export const db = {
   async approveReferrer(id: number, by: string) {
     chk(await sb.from("users").update({ verify_status: "verified", verified_at: new Date().toISOString() }).eq("id", id));
   },
+  async demoteReferrer(id: number) {
+    chk(await sb.from("users").update({ verify_status: "card_pending", verified_at: null }).eq("id", id));
+  },
   async rejectReferrer(id: number) {
     chk(await sb.from("users").update({ verify_status: "none", verified_at: null, card_cipher: null, card_iv: null, card_tag: null }).eq("id", id));
   },
