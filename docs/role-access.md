@@ -9,8 +9,16 @@
 | Provision/reset/deactivate staff | Across units, protected global account excluded | Own-unit clinicians only | No | No |
 | Change staff role or unit | Yes | No | No | No |
 | Manage another unit administrator | Yes | No, including same-unit administrators | No | No |
-| Unit duty roster changes | Every unit | Own unit | Read own unit | Read hospital roster |
+| Unit duty roster changes | Every unit | Own unit | Read own unit | Read hospital roster after verification |
+| Staff directory (`/api/team`) | Every unit | Own unit | Own unit | No |
 | Referrer verification, audit, privacy/data settings | Yes | No | No | No |
+
+Referrer accounts are verified only by the global administrator. A matching
+name and number in the public HPCSA register marks the account "HPCSA register
+match" in the verification queue but does not verify it on its own. Once
+verified, the referrer's name and HPCSA number are locked, and referrals take
+the referring doctor's name, cellphone and email from the account rather than
+the submitted form.
 
 Global admin has an explicit **Refer** navigation item and **Open referral form**
 and **Open referral workspace** links in Admin. The form uses the same validation,

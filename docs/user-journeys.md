@@ -52,7 +52,7 @@ flowchart TD
 | --- | --- | --- |
 | 1. Home / installed app | Choose receiving staff or referring clinician; signed-in users can continue to their workspace | Both entry paths stay visible |
 | 2. Either sign-in form | Credentials determine the workspace, regardless of the form used | Error stays beside the form; Home and other sign-in always reachable |
-| 3. Referrer registration | HPCSA identity match verifies automatically; otherwise upload staff card for admin review | Pending users can check status, browse roster, sign out or return Home; new submissions blocked |
+| 3. Referrer registration | HPCSA identity match is flagged for the administrator; staff card upload supports the review; the administrator confirms every account | Pending users can check status, sign out or return Home; roster and new submissions blocked until verified |
 | 4. Staff first sign-in | Temporary password requires a new password before the desk | Sign out and public navigation remain available |
 | 5. New consult | Verified referrer selects MEU/TEU/SEU and enters required information | Back to My consults; validation error preserves form |
 | 6. Receipt | Reference and private follow-up code; return to My consults or start another consult | Never resubmit just to get back to the dashboard |
