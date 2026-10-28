@@ -118,11 +118,11 @@ function Referrers() {
     catch (e) { setCardData(null); toast({ title: errMsg(e), variant: "destructive" }); }
   };
   return <div className="space-y-4">
-    <p className="text-sm text-muted-foreground">Referral-PWA accounts that could not be auto-verified against the HPCSA register. Review the staff card, then verify or reject.</p>
-    {isLoading ? <Skeleton className="h-40" /> : data.length === 0 ? <Card className="p-8 text-center text-muted-foreground">No pending referrers. New sign-ups that don't match HPCSA appear here.</Card> :
+    <p className="text-sm text-muted-foreground">Referrer accounts waiting for verification. The HPCSA register is public, so a register match shows the person exists but not that this sign-up is them. Confirm identity (staff card, or a call to the number on file) before verifying.</p>
+    {isLoading ? <Skeleton className="h-40" /> : data.length === 0 ? <Card className="p-8 text-center text-muted-foreground">No pending referrers. New sign-ups appear here.</Card> :
       <Card className="divide-y">{data.map((r) => <div key={r.id} className="p-4 flex flex-wrap gap-3 items-center">
-        <div className="flex-1 min-w-[220px]"><p className="font-medium">{r.name} {r.hasCard && <Badge variant="outline" className="ml-1">Card on file</Badge>}</p>
-          <p className="text-xs text-muted-foreground">{r.profession} · {r.email} · {r.phone}</p>
+        <div className="flex-1 min-w-[220px]"><p className="font-medium">{r.name} {r.hpcsaMatched && <Badge variant="outline" className="ml-1">HPCSA register match</Badge>}{r.hasCard && <Badge variant="outline" className="ml-1">Card on file</Badge>}</p>
+          <p className="text-xs text-muted-foreground">{[r.profession, r.hospital, r.email, r.phone].filter(Boolean).join(" · ")}</p>
           {r.hpcsa && <p className="text-xs text-muted-foreground">HPCSA {r.hpcsa}</p>}</div>
         <div className="flex gap-2">
           {r.hasCard && <Button size="sm" variant="outline" onClick={() => viewCard(r.id)}>View card</Button>}

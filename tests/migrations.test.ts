@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { test } from "node:test";
 
-const ORDER = ["migration.sql", "migration_lockdown.sql", "unit_workflows.sql", "migration_hpcsa.sql", "migration_referrers.sql", "migration_integrity.sql", "migration_chat_push.sql"];
+const ORDER = ["migration.sql", "migration_lockdown.sql", "unit_workflows.sql", "migration_hpcsa.sql", "migration_referrers.sql", "migration_integrity.sql", "migration_chat_push.sql", "migration_profile_retention.sql"];
 const sql = (file: string) => fs.readFileSync(`supabase/${file}`, "utf8").replace(/--[^\n]*/g, "");
 
 function referralColumns(): Set<string> {

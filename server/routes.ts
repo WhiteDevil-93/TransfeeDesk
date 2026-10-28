@@ -1,7 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import type { Server } from "node:http";
 import fs from "node:fs"; import path from "node:path";
-import { db, verifyPw, isUniqueViolation } from "./db";
+import { db, hashPw, verifyPw, verifyPwOrDummy, isUniqueViolation } from "./db";
 import { geocode } from "./geocode";
 import { catchmentAt } from "./catchment";
 import { facilityLocation } from "../shared/location";
@@ -17,13 +17,17 @@ import { allowedPushEndpoint, pushEnabled, pushPublicKey } from "./push";
 // Surname that a new unverified referrer needs in the register. Added to the
 // checklist so the scheduled refresh covers it, AND fetched immediately (when
 // the DB is reachable) so verification works on the next signup attempt.
+// Surnames come from unauthenticated sign-ups, so only plausible names are queued
+// and immediate register lookups are capped globally.
 let surnameQueueBusy = false;
+const SURNAME = /^[A-Z][A-Z'-]{1,39}$/;
 async function queueSurnameForRefresh(fullName: string) {
-  const surname = (fullName.trim().split(/\s+/).pop() || fullName).toUpperCase();
-  if (!surname) return;
+  const surname = (fullName.trim().split(/\s+/).pop() || "").toUpperCase();
+  if (!SURNAME.test(surname)) return;
   try {
+    if (limit("surname-queue", 50, 24 * 3600e3)) return;
     appendChecklistSurnames(surname);
-    if (surnameQueueBusy) return;
+    if (surnameQueueBusy || limit("surname-fetch", 20, 3600e3)) return;
     surnameQueueBusy = true;
     const rows = await searchIRegister(surname, true);
     if (rows.length) {
@@ -95,23 +99,47 @@ function rosterFor(date: string, spec?: string) {
   });
 }
 
-/* in-memory rate limiter: per process, reset on restart (see README "Safety and operations") */
-const hits = new Map<string, number[]>();
-function limit(key: string, max: number, windowMs: number) {
-  const now = Date.now(); const a = (hits.get(key) || []).filter(t => now - t < windowMs); a.push(now); hits.set(key, a); return a.length > max;
+/* in-memory rate limiter: per process, reset on restart (see README "Safety and operations"); keys expire with their window */
+const hits = new Map<string, { windowMs: number; times: number[] }>();
+const MAX_LIMIT_KEYS = 50_000;
+function pruneHits(now = Date.now()) {
+  for (const [key, entry] of Array.from(hits)) if (!entry.times.length || now - entry.times[entry.times.length - 1] >= entry.windowMs) hits.delete(key);
 }
+function recent(key: string, windowMs: number) {
+  const now = Date.now(); const times = (hits.get(key)?.times || []).filter(t => now - t < windowMs);
+  return { now, times };
+}
+function limit(key: string, max: number, windowMs: number) {
+  const { now, times } = recent(key, windowMs); times.push(now);
+  if (!hits.has(key) && hits.size >= MAX_LIMIT_KEYS) { pruneHits(now); if (hits.size >= MAX_LIMIT_KEYS) return true; }
+  hits.set(key, { windowMs, times }); return times.length > max;
+}
+// Checks a limit without counting this request; pair with limit() to count failures only.
+const limited = (key: string, max: number, windowMs: number) => recent(key, windowMs).times.length >= max;
+export const rateLimitKeyCount = () => hits.size;
+export { pruneHits };
 // With trust proxy = 1, req.ip is the address seen by our immediate proxy and cannot be spoofed by the client.
 const ipOf = (req: Request) => req.ip || "";
 const strOk = (o: any) => Object.entries(o).every(([k, v]) => typeof v !== "string" || v.length <= (["history", "exam", "investigations", "reason", "decisionNote"].includes(k) ? 5000 : 300));
 
 let lastPurge = 0;
 async function maybePurge() {
-  if (Date.now() - lastPurge < 3600e3) return; lastPurge = Date.now();
-  try { const s = await db.settings(); const n = await db.purgeOlderThan(s.retentionDays); if (n) await db.audit({ action: "retention_purge", detail: `${n} referral(s) older than ${s.retentionDays} days purged` }); } catch (e) { console.error("purge failed"); }
+  if (Date.now() - lastPurge < 3600e3) return;
+  try {
+    const s = await db.settings(); const n = await db.purgeOlderThan(s.retentionDays); lastPurge = Date.now();
+    if (n) await db.audit({ action: "retention_purge", detail: `${n} referral(s) older than ${s.retentionDays} days purged` });
+    await db.purgeStaleSessions();
+  } catch (e) { console.error("purge failed"); }
+}
+let maintenance: NodeJS.Timeout | undefined;
+function startMaintenance() {
+  if (maintenance) return;
+  maintenance = setInterval(() => { pruneHits(); maybePurge(); }, 15 * 60e3); maintenance.unref();
 }
 
 type AuthReq = Request & { user?: any; token?: string };
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  startMaintenance();
   const wrap = (fn: (req: AuthReq, res: Response) => Promise<any>) => (req: Request, res: Response) => fn(req as AuthReq, res).catch((e) => { console.error(req.method, req.path, e?.message); res.status(500).json({ message: "Server error" }); });
   const auth = (adminOnly = false) => async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -129,7 +157,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // /api/* is outside its navigation cache. Refresh only the worker and its
   // caches; leave browser profile data such as localStorage untouched.
   app.get("/api/refresh-app", (_req, res) => {
-    res.set("Cache-Control", "no-store").type("html").send(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Updating BaraBridge</title><p>Updating BaraBridge…</p><script>
+    res.set("Cache-Control", "no-store").set("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'").type("html").send(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Updating BaraBridge</title><p>Updating BaraBridge…</p><script>
       (async () => {
         try {
           if ('serviceWorker' in navigator) {
@@ -195,8 +223,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const p = referralInput.safeParse(req.body);
     if (!p.success || !strOk(p.data)) return res.status(400).json({ message: "Please complete all required fields and confirm the information notice." });
     if(p.data.lat && Math.abs(Number(p.data.lat))>90 || p.data.lon && Math.abs(Number(p.data.lon))>180) return res.status(400).json({message:"Invalid coordinates"});
+    // A referrer's identity comes from their verified account, never from the form body.
+    const input = req.user.role === "referrer" ? { ...p.data, doctorName: req.user.name, phone: req.user.phone, email: req.user.email || "" } : p.data;
+    if (input.doctorName.trim().length < 2 || String(input.phone || "").replace(/\D/g, "").length < 9) return res.status(400).json({ message: "Add your name and cellphone number to your profile before sending a referral." });
     let r;
-    try { r = await db.create(p.data, req.user.id); } catch(e:any) {
+    try { r = await db.create(input, req.user.id); } catch(e:any) {
       if(e.message.includes("image")||e.message.includes("JPEG")) return res.status(400).json({message:e.message});
       throw e;
     }
@@ -208,9 +239,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/status", wrap(async (req, res) => {
     if (limit("st:" + ipOf(req), 30, 3600e3)) return res.status(429).json({ message: "Too many requests" });
     const ref = String(req.body?.ref || "").toUpperCase().trim().slice(0, 30); const ph = String(req.body?.phone || "").replace(/\D/g, "").slice(-9);
-    if (limit("stref:" + ref, 10, 3600e3)) return res.status(429).json({ message: "Too many requests" });
+    if (limited("stref:" + ref, 10, 3600e3)) return res.status(429).json({ message: "Too many requests" });
     const r: any = ref && ph.length === 9 ? await db.byRef(ref) : null;
-    if (!r || r.purgedAt || String(r.phone || "").replace(/\D/g, "").slice(-9) !== ph) return res.status(404).json({ message: "No referral matches that reference and number" });
+    if (!r || r.purgedAt || String(r.phone || "").replace(/\D/g, "").slice(-9) !== ph) { if (ref) limit("stref:" + ref, 10, 3600e3); return res.status(404).json({ message: "No referral matches that reference and number" }); }
     res.json({ ref: r.ref, status: r.status, priority: r.priority, bedStatus: r.bedStatus, updatedAt: r.decidedAt || r.createdAt });
   }));
   app.post("/api/portal",wrap(async(req,res)=>{
@@ -254,9 +285,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const ip = ipOf(req); const { username = "", password = "" } = req.body || {};
     if (limit("login:" + ip, 20, 15 * 60e3)) return res.status(429).json({ message: "Too many attempts. Try again in 15 minutes." });
     const u = await db.userByName(String(username));
-    if (u && u.locked_until && new Date(u.locked_until).getTime() > Date.now()) return res.status(423).json({ message: "Account locked after failed attempts. Try again later or ask an admin." });
-    if (!u || !u.active || !verifyPw(String(password), u.pass_hash)) {
-      if (u) { const f = (u.failed || 0) + 1; await db.updateUser(u.id, { failed: f, locked_until: f >= 5 ? new Date(Date.now() + 15 * 60e3).toISOString() : null }); }
+    const passwordOk = await verifyPwOrDummy(String(password), u?.pass_hash);
+    const lockedUntil = u?.locked_until ? new Date(u.locked_until).getTime() : 0;
+    const locked = lockedUntil > Date.now();
+    // Only someone who knows the password learns that the account is locked.
+    if (u && u.active && passwordOk && locked) return res.status(423).json({ message: "Account locked after failed attempts. Try again later or ask an admin." });
+    if (!u || !u.active || !passwordOk) {
+      if (u && !locked) {
+        const f = (lockedUntil ? 0 : (u.failed || 0)) + 1;
+        await db.updateUser(u.id, { failed: f >= 5 ? 0 : f, locked_until: f >= 5 ? new Date(Date.now() + 15 * 60e3).toISOString() : null });
+      }
       if (String(username).trim()) await db.audit({ action: "login_failed", detail: String(username).slice(0, 60), ip });
       return res.status(401).json({ message: "Incorrect username or password" });
     }
@@ -296,10 +334,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (existing) return res.status(409).json({ message: "An account already exists for that username or email" });
     const d = p.data;
     const hpcsa = normalizeHpcsaNumber(d.hpcsa);
-    // Every unverified account waits in the owner's queue; it stays there
-    // (without "Card on file") until a staff card is uploaded.
+    // The HPCSA register is public, so a name + number match only proves the
+    // person exists, not that this sign-up is them. A match is flagged for the
+    // administrator ("hpcsa") but never verifies the account on its own.
     let verifyStatus = "card_pending";
-    let autoApproved = false;
+    let hpcsaMatched = false;
     try {
       if (hpcsa) {
         const hits = await db.hpcsaLookup(d.name, hpcsa);
@@ -307,7 +346,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         if (byNum) {
           const status = String(byNum.status).toUpperCase();
           const identityMatches = hpcsaIdentityMatches(d.name, hpcsa, byNum);
-          if (identityMatches) { verifyStatus = "verified"; autoApproved = true; }
+          if (identityMatches) { verifyStatus = "hpcsa"; hpcsaMatched = true; }
           else { verifyStatus = "card_pending"; queueSurnameForRefresh(d.name); }
           await audit(req, "hpcsa_check", null, `num=${hpcsa} status=${status || "n/a"} identityMatch=${identityMatches}`);
         } else {
@@ -325,15 +364,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       try { await audit(req, "hpcsa_check", null, `lookup error: ${e?.message}`); } catch { /* ignore */ }
     }
     let u;
-    try { u = await db.addReferrer({ ...d, username: String(username), password: String(password), hpcsa }); }
+    try { u = await db.addReferrer({ ...d, username: String(username), password: String(password), hpcsa, verifyStatus }); }
     catch (e) { if (isUniqueViolation(e)) return res.status(409).json({ message: "An account already exists for that username or email" }); throw e; }
-    await db.updateUser(u.id, { verify_status: verifyStatus, verified_at: verifyStatus === "verified" ? new Date().toISOString() : null });
-    await db.audit({ action: "referrer_signup", detail: `${u.username}${autoApproved ? " (HPCSA auto-verified)" : ""}`, ip: ipOf(req) });
+    await db.audit({ action: "referrer_signup", detail: `${u.username}${hpcsaMatched ? " (HPCSA register match, awaiting admin confirmation)" : ""}`, ip: ipOf(req) });
     res.json({
       ok: true,
-      autoApproved,
-      message: autoApproved
-        ? "Verified against the HPCSA register — your account is active."
+      autoApproved: false,
+      hpcsaMatched,
+      message: hpcsaMatched
+        ? "Account created and matched to the HPCSA register. An administrator will confirm your account before you can send referrals; uploading your staff card speeds this up."
         : "Account created. Please upload a photo of your staff card. You can send referrals after verification.",
     });
   }));
@@ -351,29 +390,30 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const identityChanged = (p.data.name !== undefined && !sameName(p.data.name, before.name)) ||
       (p.data.hpcsa !== undefined && normalizeHpcsaNumber(p.data.hpcsa) !== normalizeHpcsaNumber(before.hpcsaNumber || ""));
     let reverify = false;
-    if (identityChanged && number) {
+    if (identityChanged) {
+      // Verification belongs to the identity that was checked, and the public
+      // register cannot prove a new one belongs to this person, so any change
+      // goes back to the administrator; a register match is only flagged.
+      if (before.verifyStatus === "verified") { await db.demoteReferrer(req.user.id); reverify = true; }
       let match = false;
-      try { const hits = await db.hpcsaLookup(name, number); match = hits.rows.some(r => hpcsaIdentityMatches(name, number, r)); }
-      catch (e: any) { await audit(req, "hpcsa_check", null, `lookup error: ${e?.message}`); }
-      if (before.verifyStatus === "verified") {
-        // Verification belongs to the identity that was checked. A new name or
-        // number stays verified only if the register confirms it.
-        if (!match) { await db.demoteReferrer(req.user.id); reverify = true; queueSurnameForRefresh(name); }
-      } else if (match) await db.approveReferrer(req.user.id, req.user.name);
+      if (number) {
+        try { const hits = await db.hpcsaLookup(name, number); match = hits.rows.some(r => hpcsaIdentityMatches(name, number, r)); }
+        catch (e: any) { await audit(req, "hpcsa_check", null, `lookup error: ${e?.message}`); }
+      }
+      if (match) await db.markHpcsaMatched(req.user.id);
       else queueSurnameForRefresh(name);
-    } else if (identityChanged && before.verifyStatus === "verified") {
-      await db.demoteReferrer(req.user.id); reverify = true; queueSurnameForRefresh(name);
     }
     await db.audit({ userId: req.user.id, userName: req.user.name, action: reverify ? "referrer_reverify_required" : "referrer_profile_updated", ip: ipOf(req) });
     res.json(reverify
-      ? { ok: true, reverify: true, message: "Your name or HPCSA number changed and could not be confirmed against the register, so your account is back in the verification queue. Upload your staff card if you have not already." }
+      ? { ok: true, reverify: true, message: "Your name or HPCSA number changed, so your account is back in the verification queue until an administrator confirms it. Upload your staff card if you have not already." }
       : { ok: true });
   }));
   app.post("/api/referrer/card", REF, isReferrer, wrap(async (req, res) => {
     const img = imageInput.safeParse(req.body?.image);
     if (!img.success) return res.status(400).json({ message: "Please upload a JPEG, PNG or WebP photo under 2 MB" });
     if (req.user.verifyStatus === "verified") return res.status(409).json({ message: "Your account is already verified. No staff card is needed." });
-    await db.attachCard(req.user.id, img.data);
+    try { await db.attachCard(req.user.id, img.data); }
+    catch (e: any) { if (e.message.includes("image") || e.message.includes("JPEG")) return res.status(400).json({ message: e.message }); throw e; }
     await db.audit({ userId: req.user.id, userName: req.user.name, action: "referrer_card_uploaded", ip: ipOf(req) });
     res.json({ ok: true, message: "Staff card received — the owner will verify it shortly." });
   }));
@@ -426,13 +466,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/pending-referrers", ADMIN, wrap(async (req, res) => res.json(await db.pendingReferrers())));
   app.post("/api/pending-referrers/:id/approve", ADMIN, wrap(async (req, res) => {
     const id = Number(req.params.id);
-    await db.approveReferrer(id, req.user.name);
+    if (!await db.approveReferrer(id)) return res.status(404).json({ message: "Referrer not found" });
     await db.audit({ userId: req.user.id, userName: req.user.name, action: "referrer_approved", detail: `id ${id}`, ip: ipOf(req) });
     res.json({ ok: true });
   }));
   app.post("/api/pending-referrers/:id/reject", ADMIN, wrap(async (req, res) => {
     const id = Number(req.params.id);
-    await db.rejectReferrer(id);
+    if (!await db.rejectReferrer(id)) return res.status(404).json({ message: "Referrer not found" });
     await db.audit({ userId: req.user.id, userName: req.user.name, action: "referrer_rejected", detail: `id ${id}`, ip: ipOf(req) });
     res.json({ ok: true });
   }));
@@ -444,9 +484,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/me/logout", A, wrap(async (req, res) => { await db.endSession(req.token!); await audit(req, "logout"); res.json({ ok: true }); }));
   app.post("/api/me/password", A, wrap(async (req, res) => {
     const { current = "", next = "" } = req.body || {}; const u = await db.userByName(req.user.username);
-    if (!verifyPw(String(current), u.pass_hash)) return res.status(400).json({ message: "Current password is incorrect" });
+    if (limit("pwchange:" + req.user.id, 10, 15 * 60e3)) return res.status(429).json({ message: "Too many attempts. Try again in 15 minutes." });
+    if (!u || !await verifyPw(String(current), u.pass_hash)) return res.status(400).json({ message: "Current password is incorrect" });
     if (String(next).length < 10) return res.status(400).json({ message: "New password must be at least 10 characters" });
-    const { hashPw } = await import("./db"); await db.updateUser(u.id, { pass_hash: hashPw(String(next)), must_change: false });
+    await db.updateUser(u.id, { pass_hash: await hashPw(String(next)), must_change: false });
+    await db.endOtherSessions(u.id, req.token!);
     await audit(req, "password_changed"); res.json({ ok: true });
   }));
 
@@ -464,6 +506,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if(cur.purgedAt) return res.status(410).json({message:"Clinical record has expired"});
     if(p.data.team && req.user.role!=="admin") return res.status(403).json({message:"Only the global admin can reroute referrals"});
     if(p.data.status==="advised" && !p.data.decisionNote?.trim()) return res.status(400).json({message:"Type the clinical advice before sending"});
+    // Notes are only recorded alongside a decision so every change appears in the timeline.
+    if(p.data.decisionNote!==undefined && !p.data.status) return res.status(400).json({message:"Choose a decision to record a note"});
     const { ackVia, ...fields } = p.data;
     const d: any = { ...fields }; if (d.decidedBy !== undefined) d.decidedBy = req.user.name; if (d.ack !== undefined) d.ack = req.user.name;
     if(d.status) d.decidedBy=req.user.name;
@@ -517,7 +561,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const date = String(req.query.date || saToday()); res.json({ hospital: loadRoster()?.hospital, generated: loadRoster()?.generated, date, specs: rosterFor(date, req.query.spec ? String(req.query.spec) : undefined) });
   });
   app.get("/api/settings", A, wrap(async (_q, res) => res.json(await db.settings())));
-  app.get("/api/team", A, wrap(async (req, res) => res.json((await db.users()).filter(u => u.active && (req.user.role==="admin" || u.team===req.user.team)).map(u => ({ id: u.id, name: u.name, role: u.role,team:u.team,phone:u.phone })))));
+  app.get("/api/team", A, wrap(async (req, res) => {
+    if (req.user.role === "referrer") return res.status(403).json({ message: "Receiving staff only" });
+    res.json((await db.users()).filter(u => u.active && u.role !== "referrer" && (req.user.role==="admin" || (!!u.team && u.team===req.user.team))).map(u => ({ id: u.id, name: u.name, role: u.role,team:u.team,phone:u.phone })));
+  }));
   app.get("/api/unit-roster",A,wrap(async(req,res)=>{
     const team=String(req.query.team || req.user.team);
     const day=String(req.query.day || saToday());
@@ -572,7 +619,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if(b.role) u.role=b.role; if(b.team) u.team=b.team;
     }
     if(b.phone!==undefined) u.phone=String(b.phone).slice(0,30);
-    if (b.password) { if (String(b.password).length < 10) return res.status(400).json({ message: "Temporary password must be 10+ characters" }); const { hashPw } = await import("./db"); u.pass_hash = hashPw(String(b.password)); u.must_change = true; u.failed = 0; u.locked_until = null; }
+    if (b.password) { if (String(b.password).length < 10) return res.status(400).json({ message: "Temporary password must be 10+ characters" }); u.pass_hash = await hashPw(String(b.password)); u.must_change = true; u.failed = 0; u.locked_until = null; }
     if (id === req.user.id && (u.active === false || u.role === "clinician")) return res.status(400).json({ message: "You cannot deactivate or demote yourself" });
     await db.updateUser(id, u); if (u.active === false || u.pass_hash || u.team || u.role) await db.endUserSessions(id);
     await audit(req, "user_updated", null, `id ${id}: ${Object.keys(u).filter(k => k !== "pass_hash").concat(u.pass_hash ? ["password reset"] : []).join(", ")}`); res.json({ ok: true });

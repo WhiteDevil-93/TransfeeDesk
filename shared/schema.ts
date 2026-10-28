@@ -30,7 +30,7 @@ export type RosterContact = { name:string; role:string; phone:string; hash:strin
 export type RosterEntry = { role:string; text:string; contacts:RosterContact[] };
 export type RosterSpec = { id:string; name:string; group:string; period:string; notes:string[]; entries:RosterEntry[] };
 export type User = { id:number; username:string; name:string; role:Role; team:Team|null; phone:string; active:boolean; mustChange:boolean; lastLogin:string|null;
-  email?:string; specialty?:string; profession?:string|null; hpcsaNumber?:string; verifyStatus?:string; hasCard?:boolean };
+  email?:string; hospital?:string; department?:string; specialty?:string; profession?:string|null; hpcsaNumber?:string; verifyStatus?:string; hasCard?:boolean };
 export type AuditRow = { id:number; at:string; userName:string; action:string; referralId:number|null; detail:string; ip:string };
 export type AppSettings = { p1:number; p2:number; p3:number; repeat:number; escalate:number; sound:boolean; retentionDays:number; responsibleParty:string; infoOfficer:string; infoOfficerEmail:string; infoOfficerPhone:string };
 export type ImageAttachment = { id:number; name:string; mime:string; data?:string; createdAt:string; followupId:number|null };

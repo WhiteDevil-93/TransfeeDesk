@@ -6,6 +6,7 @@ import { serveStatic } from "./static";
 import { createServer } from "node:http";
 import { runBulkExport } from "../script/hpcsa-scrape";
 import { databaseReady } from "./readiness";
+import { applyHttpHardening } from "./http-hardening";
 import { auditStatus } from "./db";
 import { configurePush, pushEnabled } from "./push";
 import { startPushScheduler } from "./notify";
@@ -13,31 +14,9 @@ import { startPushScheduler } from "./notify";
 const app = express();
 const httpServer = createServer(app);
 
-declare module "http" {
-  interface IncomingMessage {
-    rawBody: unknown;
-  }
-}
-
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
-app.use((_req, res, next) => {
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("Referrer-Policy", "no-referrer");
-  res.setHeader("Cache-Control", "no-store");
-  res.setHeader("Strict-Transport-Security", "max-age=31536000");
-  next();
-});
-app.use(
-  express.json({
-    limit: "9mb",
-    verify: (req, _res, buf) => {
-      req.rawBody = buf;
-    },
-  }),
-);
-
-app.use(express.urlencoded({ extended: false }));
+applyHttpHardening(app, process.env.NODE_ENV === "production");
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {

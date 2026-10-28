@@ -19,40 +19,65 @@ export const defaults: AppSettings = { p1: 5, p2: 30, p3: 120, repeat: 5, escala
   responsibleParty: "Chris Hani Baragwanath Academic Hospital", infoOfficer: "", infoOfficerEmail: "", infoOfficerPhone: "" };
 
 /* ---------- passwords & sessions ---------- */
-export function hashPw(pw: string) { const salt = crypto.randomBytes(16); const h = crypto.scryptSync(pw, salt, 64, { N: 16384 }); return `scrypt$${salt.toString("hex")}$${h.toString("hex")}`; }
-export function verifyPw(pw: string, stored: string) {
+const scrypt = (pw: string, salt: Buffer) => new Promise<Buffer>((resolve, reject) => crypto.scrypt(pw, salt, 64, { N: 16384 }, (e, key) => e ? reject(e) : resolve(key)));
+export async function hashPw(pw: string) { const salt = crypto.randomBytes(16); const h = await scrypt(pw, salt); return `scrypt$${salt.toString("hex")}$${h.toString("hex")}`; }
+export async function verifyPw(pw: string, stored: string) {
   const [kind, s, h] = String(stored || "").split("$");
   if (kind !== "scrypt" || !/^[0-9a-f]{32}$/.test(s || "") || !/^[0-9a-f]{128}$/.test(h || "")) return false;
-  const c = crypto.scryptSync(pw, Buffer.from(s, "hex"), 64, { N: 16384 });
+  const c = await scrypt(pw, Buffer.from(s, "hex"));
   return crypto.timingSafeEqual(c, Buffer.from(h, "hex"));
 }
+// Verified against when the username does not exist, so unknown and known accounts take the same time.
+const DUMMY_HASH = `scrypt$${"0".repeat(32)}$${"0".repeat(128)}`;
+export const verifyPwOrDummy = (pw: string, stored?: string | null) => verifyPw(pw, stored || DUMMY_HASH);
 export const isUniqueViolation = (e: unknown) => /duplicate key value violates unique constraint/i.test(String((e as any)?.message || ""));
 const sha = (t: string) => crypto.createHash("sha256").update(t).digest("hex");
 const IDLE_MIN = 30, ABS_HOURS = 12;
 const userOut = (u: any): User => ({ id: u.id, username: u.username, name: u.name, role: u.role, team:u.team, phone:u.phone || "", active: u.active, mustChange: u.must_change, lastLogin: u.last_login,
-  email: u.email || "", specialty: u.specialty || "", profession: u.profession || null, hpcsaNumber: u.hpcsa_number || "", verifyStatus: u.verify_status || "none", hasCard: !!u.card_cipher });
+  email: u.email || "", hospital: u.hospital || "", department: u.department || "", specialty: u.specialty || "", profession: u.profession || null, hpcsaNumber: u.hpcsa_number || "", verifyStatus: u.verify_status || "none", hasCard: !!u.card_cipher });
 function publicReferral(row:any) { const r = toCamel(row); if(r) delete r.portalHash; return r; }
-const imgKey = Buffer.from(crypto.hkdfSync("sha256", process.env.APP_DB_SECRET || "", "transferdesk-images-v1", "private-clinical-images", 32));
-const cardKey = Buffer.from(crypto.hkdfSync("sha256", process.env.APP_DB_SECRET || "", "transferdesk-images-v1", "referrer-staff-cards", 32));
-export function encryptCard(img: { mime: string; data: string }) {
-  const bytes = Buffer.from(img.data, "base64");
-  if (bytes.length > 2 * 1024 * 1024 || !bytes.length) throw new Error("Staff card image must be under 2 MB");
-  const iv = crypto.randomBytes(12), cipher = crypto.createCipheriv("aes-256-gcm", cardKey, iv);
+
+/* ---------- at-rest encryption ----------
+ * APP_DB_SECRET is sent to Supabase on every request, so it must not be the only
+ * root for data keys. New writes use APP_DATA_KEY (never leaves this server) and
+ * are marked with a "v2:" IV prefix; unprefixed rows are legacy and still decrypt
+ * with the APP_DB_SECRET-derived key until script/reencrypt-data.ts migrates them. */
+const dataKeyRoot = process.env.APP_DATA_KEY || "";
+if (dataKeyRoot && (dataKeyRoot.length < 32 || dataKeyRoot === process.env.APP_DB_SECRET)) throw new Error("APP_DATA_KEY must be at least 32 characters and differ from APP_DB_SECRET");
+if (!dataKeyRoot) console.warn("APP_DATA_KEY is not set: new images and staff cards are encrypted with the legacy APP_DB_SECRET-derived key");
+const V2 = "v2:";
+const deriveKey = (root: string, info: string) => Buffer.from(crypto.hkdfSync("sha256", root, "transferdesk-images-v1", info, 32));
+export const dataKeys = {
+  image: { legacy: deriveKey(process.env.APP_DB_SECRET || "", "private-clinical-images"), current: dataKeyRoot ? deriveKey(dataKeyRoot, "private-clinical-images") : null },
+  card: { legacy: deriveKey(process.env.APP_DB_SECRET || "", "referrer-staff-cards"), current: dataKeyRoot ? deriveKey(dataKeyRoot, "referrer-staff-cards") : null },
+};
+type KeyPair = { legacy: Buffer; current: Buffer | null };
+export function sealBytes(bytes: Buffer, keys: KeyPair) {
+  const key = keys.current || keys.legacy, iv = crypto.randomBytes(12), cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
   const data = Buffer.concat([cipher.update(bytes), cipher.final()]);
-  return { cipher: data.toString("base64"), iv: iv.toString("base64"), tag: cipher.getAuthTag().toString("base64") };
+  return { cipher: data.toString("base64"), iv: (keys.current ? V2 : "") + iv.toString("base64"), tag: cipher.getAuthTag().toString("base64") };
+}
+export function openBytes(row: { cipher: string; iv: string; tag: string }, keys: KeyPair) {
+  const v2 = row.iv.startsWith(V2);
+  if (v2 && !keys.current) throw new Error("APP_DATA_KEY is required to decrypt this record");
+  const d = crypto.createDecipheriv("aes-256-gcm", v2 ? keys.current! : keys.legacy, Buffer.from(v2 ? row.iv.slice(V2.length) : row.iv, "base64"));
+  d.setAuthTag(Buffer.from(row.tag, "base64"));
+  return Buffer.concat([d.update(Buffer.from(row.cipher, "base64")), d.final()]);
+}
+function checkedImageBytes(img: { mime: string; data: string }, label: string) {
+  const bytes = Buffer.from(img.data, "base64");
+  if (bytes.length > 2 * 1024 * 1024 || !bytes.length) throw new Error(`${label} must be under 2 MB`);
+  const ok = img.mime === "image/jpeg" ? bytes.subarray(0, 3).equals(Buffer.from([255, 216, 255])) :
+    img.mime === "image/png" ? bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) :
+    img.mime === "image/webp" && bytes.subarray(0, 4).toString() === "RIFF" && bytes.subarray(8, 12).toString() === "WEBP";
+  if (!ok) throw new Error("Only JPEG, PNG and WebP images are accepted");
+  return bytes;
+}
+export function encryptCard(img: { mime: string; data: string }) {
+  return sealBytes(checkedImageBytes(img, "Staff card image"), dataKeys.card);
 }
 export function encryptImages(images:any[]) {
-  return images.map(im => {
-    const bytes = Buffer.from(im.data,"base64");
-    if(bytes.length > 2*1024*1024 || !bytes.length) throw new Error("Each image must be under 2 MB");
-    const ok = im.mime==="image/jpeg" ? bytes.subarray(0,3).equals(Buffer.from([255,216,255])) :
-      im.mime==="image/png" ? bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])) :
-      im.mime==="image/webp" && bytes.subarray(0,4).toString()==="RIFF" && bytes.subarray(8,12).toString()==="WEBP";
-    if(!ok) throw new Error("Only JPEG, PNG and WebP images are accepted");
-    const iv=crypto.randomBytes(12), cipher=crypto.createCipheriv("aes-256-gcm",imgKey,iv);
-    const data=Buffer.concat([cipher.update(bytes),cipher.final()]);
-    return {name:im.name.replace(/[^\w .-]/g,"_").slice(0,100),mime:im.mime,cipher:data.toString("base64"),iv:iv.toString("base64"),tag:cipher.getAuthTag().toString("base64")};
-  });
+  return images.map(im => ({ name: im.name.replace(/[^\w .-]/g, "_").slice(0, 100), mime: im.mime, ...sealBytes(checkedImageBytes(im, "Each image"), dataKeys.image) }));
 }
 
 export const REFERRAL_QUEUE_COLUMNS = "id,ref,team,consult_type,opened_at,opened_by,latest_followup_at,followup_seen_at,created_at,doctor_name,hospital,department,phone,specialty,current_location,bed_needed,patient_initials,age,sex,diagnosis,reason,suggested_priority,priority,status,decided_by,decided_at,bed_status,bed_ward,remind_at,ack_by,ack_at,purged_at,awaiting_info_at,lat,lon,loc_source";
@@ -81,13 +106,13 @@ export const db = {
   /* users */
   async userByName(username: string) { return chk(await sb.from("users").select("*").eq("username", username.toLowerCase().trim()).maybeSingle()) as any; },
   async users(): Promise<User[]> { return (chk(await sb.from("users").select("*").order("name")) as any[]).map(userOut); },
-  async addUser(username: string, name: string, role: string, pw: string, team:Team|null=null, phone="") { return userOut(chk(await sb.from("users").insert({ username: username.toLowerCase().trim(), name, role, team, phone, pass_hash: hashPw(pw), must_change: true }).select().single())); },
-  async addReferrer(b: { username: string; name: string; password: string; email: string; phone: string; hospital: string; department: string; specialty: string; profession: string; hpcsa: string }) {
+  async addUser(username: string, name: string, role: string, pw: string, team:Team|null=null, phone="") { return userOut(chk(await sb.from("users").insert({ username: username.toLowerCase().trim(), name, role, team, phone, pass_hash: await hashPw(pw), must_change: true }).select().single())); },
+  async addReferrer(b: { username: string; name: string; password: string; email: string; phone: string; hospital: string; department: string; specialty: string; profession: string; hpcsa: string; verifyStatus: string }) {
     return userOut(chk(await sb.from("users").insert({
       username: b.username.toLowerCase().trim(), name: b.name, role: "referrer", team: null,
-      email: b.email.trim().toLowerCase(), phone: b.phone, specialty: b.specialty,
-      profession: b.profession, hpcsa_number: normalizeHpcsaNumber(b.hpcsa),
-      pass_hash: hashPw(b.password), must_change: false,
+      email: b.email.trim().toLowerCase(), phone: b.phone, hospital: b.hospital, department: b.department, specialty: b.specialty,
+      profession: b.profession, hpcsa_number: normalizeHpcsaNumber(b.hpcsa), verify_status: b.verifyStatus,
+      pass_hash: await hashPw(b.password), must_change: false,
     }).select().single()));
   },
   async updateReferrer(id: number, b: { name?: string; email?: string; phone?: string; hospital?: string; department?: string; specialty?: string; profession?: string; hpcsa?: string }) {
@@ -95,6 +120,8 @@ export const db = {
     if (b.name !== undefined) n.name = b.name;
     if (b.email !== undefined) n.email = b.email.trim().toLowerCase();
     if (b.phone !== undefined) n.phone = b.phone;
+    if (b.hospital !== undefined) n.hospital = b.hospital;
+    if (b.department !== undefined) n.department = b.department;
     if (b.specialty !== undefined) n.specialty = b.specialty;
     if (b.profession !== undefined) n.profession = b.profession;
     if (b.hpcsa !== undefined) n.hpcsa_number = normalizeHpcsaNumber(b.hpcsa);
@@ -103,27 +130,30 @@ export const db = {
   },
   async attachCard(id: number, img: { name: string; mime: string; data: string }) {
     const e = encryptCard(img);
-    chk(await sb.from("users").update({ card_cipher: e.cipher, card_iv: e.iv, card_tag: e.tag, verify_status: "card_pending" }).eq("id", id));
+    // A register match ("hpcsa") stays flagged as such; everything else waits on the card.
+    chk(await sb.from("users").update({ card_cipher: e.cipher, card_iv: e.iv, card_tag: e.tag }).eq("id", id).eq("role", "referrer").neq("verify_status", "verified"));
+    chk(await sb.from("users").update({ verify_status: "card_pending" }).eq("id", id).eq("verify_status", "none"));
   },
   async pendingReferrers() {
-    const rows = (chk(await sb.from("users").select("*").eq("verify_status", "card_pending").order("name")) as any[]);
-    return rows.map((u) => ({ id: u.id, username: u.username, name: u.name, email: u.email || "", phone: u.phone || "", hpcsa: u.hpcsa_number || "", profession: u.profession || "", hasCard: !!u.card_cipher, createdAt: u.created_at }));
+    const rows = (chk(await sb.from("users").select("*").eq("role", "referrer").in("verify_status", ["card_pending", "hpcsa"]).order("name")) as any[]);
+    return rows.map((u) => ({ id: u.id, username: u.username, name: u.name, email: u.email || "", phone: u.phone || "", hospital: u.hospital || "", hpcsa: u.hpcsa_number || "", hpcsaMatched: u.verify_status === "hpcsa", profession: u.profession || "", hasCard: !!u.card_cipher, createdAt: u.created_at }));
   },
-  async approveReferrer(id: number, by: string) {
-    chk(await sb.from("users").update({ verify_status: "verified", verified_at: new Date().toISOString() }).eq("id", id));
+  async markHpcsaMatched(id: number) {
+    chk(await sb.from("users").update({ verify_status: "hpcsa" }).eq("id", id).eq("role", "referrer").neq("verify_status", "verified"));
+  },
+  async approveReferrer(id: number) {
+    return (chk(await sb.from("users").update({ verify_status: "verified", verified_at: new Date().toISOString() }).eq("id", id).eq("role", "referrer").select("id")) as any[]).length > 0;
   },
   async demoteReferrer(id: number) {
     chk(await sb.from("users").update({ verify_status: "card_pending", verified_at: null }).eq("id", id));
   },
   async rejectReferrer(id: number) {
-    chk(await sb.from("users").update({ verify_status: "none", verified_at: null, card_cipher: null, card_iv: null, card_tag: null }).eq("id", id));
+    return (chk(await sb.from("users").update({ verify_status: "none", verified_at: null, card_cipher: null, card_iv: null, card_tag: null }).eq("id", id).eq("role", "referrer").select("id")) as any[]).length > 0;
   },
   async referrerCard(id: number) {
-    const r: any = chk(await sb.from("users").select("card_cipher,card_iv,card_tag").eq("id", id).maybeSingle());
+    const r: any = chk(await sb.from("users").select("card_cipher,card_iv,card_tag").eq("id", id).eq("role", "referrer").maybeSingle());
     if (!r?.card_cipher) return null;
-    const d = crypto.createDecipheriv("aes-256-gcm", cardKey, Buffer.from(r.card_iv, "base64"));
-    d.setAuthTag(Buffer.from(r.card_tag, "base64"));
-    return Buffer.concat([d.update(Buffer.from(r.card_cipher, "base64")), d.final()]).toString("base64");
+    return openBytes({ cipher: r.card_cipher, iv: r.card_iv, tag: r.card_tag }, dataKeys.card).toString("base64");
   },
   async hpcsaLookup(name: string, number: string) {
     const n = normalizeHpcsaNumber(number);
@@ -171,7 +201,12 @@ export const db = {
     return { ...userOut(s.users) };
   },
   async endSession(token: string) { await sb.from("sessions").delete().eq("id", sha(token)); },
-  async endUserSessions(userId: number) { await sb.from("sessions").delete().eq("user_id", userId); },
+  async endUserSessions(userId: number) { chk(await sb.from("sessions").delete().eq("user_id", userId)); },
+  async endOtherSessions(userId: number, keepToken: string) { chk(await sb.from("sessions").delete().eq("user_id", userId).neq("id", sha(keepToken))); },
+  async purgeStaleSessions() {
+    const now = Date.now();
+    chk(await sb.from("sessions").delete().or(`expires_at.lt.${new Date(now).toISOString()},last_seen.lt.${new Date(now - IDLE_MIN * 60000).toISOString()}`));
+  },
 
   /* referrals */
   async list(team?:Team|null, referrerId?:number|null): Promise<Referral[]> {
@@ -220,8 +255,7 @@ export const db = {
   async image(id:number,referralId:number) {
     const r:any=chk(await sb.from("referral_images").select("*").eq("id",id).eq("referral_id",referralId).maybeSingle());
     if(!r) return null;
-    const d=crypto.createDecipheriv("aes-256-gcm",imgKey,Buffer.from(r.iv,"base64")); d.setAuthTag(Buffer.from(r.tag,"base64"));
-    return {id:r.id,name:r.name,mime:r.mime,data:Buffer.concat([d.update(Buffer.from(r.cipher,"base64")),d.final()]).toString("base64")};
+    return {id:r.id,name:r.name,mime:r.mime,data:openBytes(r,dataKeys.image).toString("base64")};
   },
   async append(id:number,author:string,userId:number|null,kind:string,body:string,images:any[]=[]) {
     return chk(await sb.rpc("append_followup",{p_referral:id,p_author:author,p_user:userId,p_kind:kind,p_body:body,p_images:encryptImages(images)}));

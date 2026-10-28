@@ -13,6 +13,7 @@ const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block" });
 const page = await context.newPage(); const errors = [], checks = [];
 page.on("pageerror", error => errors.push(error.message));
+page.on("console", message => { if (message.type() === "error" && /Content.Security.Policy/i.test(message.text())) errors.push(message.text()); });
 const go = async route => { await page.goto(`${base}/#${route}`); };
 const visible = async locator => { await locator.waitFor({ state: "visible" }); };
 const check = name => { checks.push(name); console.log(`PASS ${name}`); };

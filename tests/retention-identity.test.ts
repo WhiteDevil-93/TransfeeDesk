@@ -28,11 +28,11 @@ async function withApp(run: (base: string) => Promise<void>) {
 }
 const post = (url: string, body: unknown, token?: string) => fetch(url, { method: "POST", headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) });
 
-test("malformed stored password hashes fail closed instead of throwing", () => {
-  const good = hashPw("correct horse battery");
-  assert.equal(verifyPw("correct horse battery", good), true);
-  assert.equal(verifyPw("wrong", good), false);
-  for (const bad of ["", "plain", "scrypt$abc$def", good.slice(0, -2), good.replace("scrypt", "bcrypt"), null as any]) assert.equal(verifyPw("x", bad), false);
+test("malformed stored password hashes fail closed instead of throwing", async () => {
+  const good = await hashPw("correct horse battery");
+  assert.equal(await verifyPw("correct horse battery", good), true);
+  assert.equal(await verifyPw("wrong", good), false);
+  for (const bad of ["", "plain", "scrypt$abc$def", good.slice(0, -2), good.replace("scrypt", "bcrypt"), null as any]) assert.equal(await verifyPw("x", bad), false);
 });
 
 test("login with a corrupted hash is a normal failed attempt, not a server error", async t => {
@@ -62,16 +62,16 @@ const signup = { username: "new_referrer", password: "long-enough-password", nam
 test("referrer sign-up: lookup failures and duplicate races never create a second account", async t => {
   t.mock.method(db, "audit", async () => {});
   const statuses: string[] = [];
-  t.mock.method(db, "updateUser", async (_id: number, patch: any) => { statuses.push(patch.verify_status); return [] as any; });
   const identity = t.mock.method(db, "userByIdentity", async () => { throw new Error("upstream timeout"); });
-  const add = t.mock.method(db, "addReferrer", async () => ({ id: 9, username: "new_referrer" }) as any);
+  const add = t.mock.method(db, "addReferrer", async (b: any) => (statuses.push(b.verifyStatus), { id: 9, username: "new_referrer" }) as any);
   await withApp(async base => {
     assert.equal((await post(`${base}/api/referrer/signup`, signup)).status, 500, "a failed identity check is not 'no account'");
     assert.equal(add.mock.callCount(), 0);
     identity.mock.mockImplementation(async () => null);
     add.mock.mockImplementation(async () => { throw new Error('duplicate key value violates unique constraint "users_email_unique"'); });
     assert.equal((await post(`${base}/api/referrer/signup`, { ...signup, username: "new_referrer2" })).status, 409);
-    add.mock.mockImplementation(async () => ({ id: 9, username: "new_referrer3" }) as any);
+    statuses.length = 0;
+    add.mock.mockImplementation(async (b: any) => (statuses.push(b.verifyStatus), { id: 9, username: "new_referrer3" }) as any);
     assert.equal((await post(`${base}/api/referrer/signup`, { ...signup, username: "new_referrer3", hpcsa: "" })).status, 200);
     assert.deepEqual(statuses, ["card_pending"], "sign-ups without an HPCSA number reach the owner's verification queue");
   });
@@ -90,7 +90,7 @@ test("referrer profile email changes cannot take another account's address", asy
   });
 });
 
-test("a verified referrer who changes name or HPCSA number stays verified only if the register confirms it", async t => {
+test("a verified referrer who changes name or HPCSA number goes back to the admin, flagged when the register matches", async t => {
   const stored = { name: "Jane Smith", hpcsaNumber: "MP0123456" };
   t.mock.method(db, "sessionUser", async () => ({ id: 3, role: "referrer", ...stored, verifyStatus: "verified", mustChange: false }) as any);
   t.mock.method(db, "audit", async () => {});
@@ -100,6 +100,7 @@ test("a verified referrer who changes name or HPCSA number stays verified only i
   let registered: any[] = [];
   const lookup = t.mock.method(db, "hpcsaLookup", async () => ({ rows: registered }) as any);
   const demote = t.mock.method(db, "demoteReferrer", async () => {});
+  const marked = t.mock.method(db, "markHpcsaMatched", async () => {});
   const entry = (full_name: string, hpcsa_number: string, status = "ACTIVE") => ({ full_name, hpcsa_number, status });
   const update = async (base: string, body: any) => (await post(`${base}/api/referrer/profile`, body, "t")).json();
   await withApp(async base => {
@@ -114,13 +115,17 @@ test("a verified referrer who changes name or HPCSA number stays verified only i
     assert.equal(renamed.reverify, true);
     assert.equal(demote.mock.callCount(), 1, "an unconfirmed new name returns the account to the verification queue");
 
+    assert.equal(marked.mock.callCount(), 0);
+
     registered = [entry("BROWN JANE", "MP 0123456")];
-    assert.deepEqual(await update(base, { name: "Jane Brown" }), { ok: true }, "confirmed");
-    assert.equal(demote.mock.callCount(), 1, "a name the register confirms keeps the account verified");
+    assert.equal((await update(base, { name: "Jane Brown" })).reverify, true, "the public register cannot prove the new identity is this person");
+    assert.equal(demote.mock.callCount(), 2);
+    assert.equal(marked.mock.callCount(), 1, "a register match is flagged for the administrator");
 
     registered = [entry("SMITH JANE", "MP0123456", "REMOVED")];
     assert.equal((await update(base, { hpcsa: "MP 0999999" })).reverify, true);
-    assert.equal(demote.mock.callCount(), 2, "a number that is not on the register is not trusted");
+    assert.equal(demote.mock.callCount(), 3, "a number that is not on the register is not trusted");
+    assert.equal(marked.mock.callCount(), 1);
   });
 });
 

@@ -35,6 +35,15 @@ Preservation --------- separate services; existing workloads intact+
 5. Stop and disable the temporary setup service after handoff. Remove its token
    environment file. Never record the token or secret in Git, logs, or job cards.
 
+6. Apply `supabase/migration_profile_retention.sql` to the existing database
+   (additive and re-runnable). Then generate `APP_DATA_KEY` (for example `openssl rand -hex 32`),
+   store it in the secrets manager first, append it to
+   `/var/lib/transferdesk/runtime.env` as `APP_DATA_KEY="..."`, restart
+   `transferdesk.service`, and run `node dist/reencrypt-data.cjs --dry-run`, then
+   without `--dry-run`, with the same environment to move existing images and staff cards off the
+   `APP_DB_SECRET`-derived key. Until then the server logs a warning and keeps
+   using the legacy key.
+
 If credential checks fail, leave the clinical service unavailable; do not rotate
 the secret or weaken RLS. If a release fails, point `current` at the preceding
 release and restart only TransferDesk. Restore the saved Caddy configuration if

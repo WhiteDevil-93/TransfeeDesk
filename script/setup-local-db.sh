@@ -41,6 +41,9 @@ $PSQL < supabase/migration_integrity.sql
 echo "== migration_chat_push.sql (referral chat, push subscriptions, purge update) =="
 $PSQL < supabase/migration_chat_push.sql
 
+echo "== migration_profile_retention.sql (referrer hospital/department, wider purge) =="
+$PSQL < supabase/migration_profile_retention.sql
+
 echo "== seed owner (global admin) =="
 # scrypt hash of the owner password, same algorithm as server/db.ts.
 HASH="$(node -e '
