@@ -28,6 +28,7 @@ import { CatchmentWindow, CatchmentPage } from "./catchment";
 import { TeamSelect, ReferrerPortal, Timeline, Images, UnitRoster, messageOf } from "./workflows";
 import { openedNotice, updateNotice } from "./lib/referrer-notice";
 import { resolveDetail } from "./lib/referral-detail";
+import { copyText, useAutoClear } from "./lib/use-auto-clear";
 type Me = User;
 
 const Logo = () => (
@@ -188,7 +189,13 @@ function P1Alarm({ list, me, onOpen }: { list: Referral[]; me: string; onOpen: (
 }
 
 function SettingsSheet({ open, onClose, st, setSt, due, onOpen, admin }: any) {
-  const set = (k: keyof AlertSettings) => (e: any) => { const v = { ...st, [k]: k === "sound" ? !st.sound : Math.max(1, Number(e.target.value) || 1) }; if (k !== "sound" && !admin) return; setSt(v); if (admin) apiRequest("PUT", "/api/settings", v).catch(() => {}); };
+  const { toast } = useToast();
+  const set = (k: keyof AlertSettings) => (e: any) => {
+    const v = { ...st, [k]: k === "sound" ? !st.sound : Math.max(1, Number(e.target.value) || 1) };
+    if (k !== "sound" && !admin) return;
+    const previous = st; setSt(v);
+    if (admin) apiRequest("PUT", "/api/settings", v).catch(error => { setSt(previous); toast({ title: "Alert settings were not saved", description: `${messageOf(error)} The previous values are back in place.`, variant: "destructive" }); });
+  };
   const perm = canNotify() ? Notification.permission : "unsupported";
   return <Sheet open={open} onOpenChange={(o) => !o && onClose()}><SheetContent className="w-full sm:max-w-md overflow-y-auto"><SheetHeader><SheetTitle>Alerts and reminders</SheetTitle></SheetHeader>
     <div className="space-y-5 mt-4">
@@ -279,7 +286,8 @@ function Detail({ r: lite, me, onClose, user }: { r: Referral|null; me: string; 
   const m = useMutation({ mutationFn: async (u: any) => (await apiRequest("PATCH", `/api/referrals/${r!.id}`, u)).json(), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/referrals"] }); queryClient.invalidateQueries({ queryKey: [`/api/referrals/${lite?.id}`] }); },onError:e=>toast({title:messageOf(e),variant:"destructive"}) });
   const [portalCode,setPortalCode]=useState("");
   const [caseTab, setCaseTab] = useState("clinical");
-  useEffect(() => { setWard(null); setMap(false); }, [r?.id]);
+  useEffect(() => { setWard(null); setMap(false); setPortalCode(""); }, [r?.id]);
+  useAutoClear(portalCode, () => setPortalCode(""), 60_000);
   if (!r) return null;
   const locked = !ready || m.isPending;
   const dr = r.doctorName.replace(/^dr\.?\s*/i,"");
@@ -308,7 +316,7 @@ function Detail({ r: lite, me, onClose, user }: { r: Referral|null; me: string; 
       <TabsContent value="images" className="space-y-3"><h3 className="font-semibold">Clinical images</h3>{!full?.images?.length && <p className="text-sm text-muted-foreground">No initial referral images. Images attached to updates are in History.</p>}<Images images={full?.images} referralId={r.id}/></TabsContent>
       <TabsContent value="history" className="space-y-3"><h3 className="font-semibold text-sm">Updates and response history</h3><Timeline entries={full?.timeline} referralId={r.id}/>{!full?.timeline?.length && <p className="text-sm text-muted-foreground">No updates recorded yet.</p>}</TabsContent></Tabs>
       <OnCallBox spec={r.specialty} msg={fwd} onShare={logShare} show={user.role==="admin"} />
-      <div className="border-t pt-4 space-y-3"><div className="flex items-center gap-3"><Label className="w-16">Priority</Label><div className="flex gap-1">{(["P1","P2","P3"] as const).map(p => <Button key={p} size="sm" variant={r.priority===p?"default":"outline"} disabled={locked} onClick={() => m.mutate({ priority: p })} data-testid={`button-set-${p}`}>{p}</Button>)}</div></div>
+      <div className="border-t pt-4 space-y-3"><div className="flex items-center gap-3"><Label className="w-16">Priority</Label><div className="flex gap-1">{(["P1","P2","P3"] as const).map(p => <Button key={p} size="sm" variant={r.priority===p?"default":"outline"} disabled={locked} onClick={() => { if (p === "P1" && r.priority !== "P1" && !window.confirm(`Escalate ${r.ref} to P1? The P1 alarm sounds for the whole unit until someone acknowledges it.`)) return; m.mutate({ priority: p }); }} data-testid={`button-set-${p}`}>{p}</Button>)}</div></div>
         <div className="flex flex-wrap items-center gap-2"><Label className="w-16">Bed</Label><Select value={r.bedStatus || "Not assigned"} onValueChange={(v) => m.mutate({ bedStatus: v })} disabled={locked}><SelectTrigger className="w-44" data-testid="select-bedstatus"><SelectValue /></SelectTrigger><SelectContent>{BEDSTAT.map(b => <SelectItem key={b} value={b}>{b}</SelectItem>)}</SelectContent></Select>
           <Input className="flex-1 min-w-[140px]" placeholder="Ward / bed no." value={ward ?? r.bedWard ?? ""} disabled={!ready} onChange={(e) => setWard(e.target.value)} onBlur={() => ward !== null && ready && m.mutate({ bedWard: ward })} data-testid="input-bedward" /></div>
         <div className="rounded-xl border border-primary/25 bg-accent/50 p-4 space-y-3"><Field label="Clinical advice / note to referring doctor"><Textarea rows={4} maxLength={5000} value={note} onChange={(e) => setNote(e.target.value)} placeholder={r.decisionNote || "Type clinical advice, treatment plan or transfer instructions"} data-testid="input-advice" /></Field><p className="text-xs leading-relaxed text-muted-foreground">Choose a decision below. Advice alone does not accept a transfer.</p></div>
@@ -317,7 +325,7 @@ function Detail({ r: lite, me, onClose, user }: { r: Referral|null; me: string; 
           {r.remindAt && <span className="text-xs text-muted-foreground">Set for {new Date(r.remindAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>}</div>}
         {ready && r.status!=="pending" && <a href={`https://wa.me/${waNum(r.phone)}?text=${encodeURIComponent(updateNotice({ doctor: dr, ref: r.ref, sender: me }))}`} target="_blank" rel="noreferrer" onClick={() => logShare(`referring doctor ${r.phone}`)}><Button variant="secondary" className="w-full" data-testid="button-notify"><MessageCircle className="h-4 w-4 mr-1" />Notify Dr {dr} on WhatsApp</Button></a>}
         {ready && <a href={`https://wa.me/${waNum(r.phone)}?text=${encodeURIComponent(openedNotice({ ref: r.ref, team: r.team }))}`} target="_blank" rel="noreferrer" onClick={()=>logShare("opened receipt")}><Button variant="outline" className="w-full">WhatsApp: referral opened</Button></a>}
-        {user.role!=="clinician"&&<div className="border rounded p-3 space-y-2"><p className="text-xs text-muted-foreground">Legacy referral or lost code? Verify the referring doctor's identity before resetting portal access.</p><Button size="sm" variant="outline" disabled={!ready} onClick={async()=>{try{const d=await(await apiRequest("POST",`/api/referrals/${r.id}/portal-reset`)).json();setPortalCode(d.code);}catch(e){toast({title:messageOf(e),variant:"destructive"});}}}>Generate new private follow-up code</Button>{portalCode&&<p className="font-mono text-xs break-all select-all">{portalCode}</p>}</div>}
+        {user.role!=="clinician"&&<div className="border rounded p-3 space-y-2"><p className="text-xs text-muted-foreground">Legacy referral or lost code? Verify the referring doctor's identity before resetting portal access.</p><Button size="sm" variant="outline" disabled={!ready} onClick={async()=>{try{const d=await(await apiRequest("POST",`/api/referrals/${r.id}/portal-reset`)).json();setPortalCode(d.code);}catch(e){toast({title:messageOf(e),variant:"destructive"});}}}>Generate new private follow-up code</Button>{portalCode&&<div role="status" className="space-y-2"><p className="font-mono text-xs break-all select-all">{portalCode}</p><div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={async()=>{if(await copyText(portalCode)){toast({title:"Code copied and hidden"});setPortalCode("");}else toast({title:"Couldn't copy. Select the code and copy it.",variant:"destructive"});}}>Copy and hide</Button><Button size="sm" variant="ghost" onClick={()=>setPortalCode("")}>Hide</Button></div><p className="text-xs text-muted-foreground">Give this to the referring doctor privately. It hides itself after a minute and cannot be shown again.</p></div>}</div>}
         {r.decidedBy && <p className="text-xs text-muted-foreground">Last update by {r.decidedBy}{r.decidedAt && `, ${ago(r.decidedAt)}`}</p>}
       </div><Button variant="outline" className="w-full" onClick={onClose}>Back to referral queue</Button></div></SheetContent></Sheet>;
 }
