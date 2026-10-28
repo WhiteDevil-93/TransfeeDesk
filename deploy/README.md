@@ -48,7 +48,8 @@ must be configured and verified separately.
 
 The application runs behind Caddy on loopback port 5000; setup uses loopback 5001.
 Only ports 80 and 443 are added to the host firewall. Bulk HPCSA refresh is
-disabled in the web process (`HPCSA_AUTO_REFRESH=0`) pending an independent job.
+disabled in the web process (it only runs with `HPCSA_AUTO_REFRESH=1`; the
+handoff also writes `HPCSA_AUTO_REFRESH=0`) pending an independent job.
 After `supabase/migration_hpcsa.sql` is applied, run the packaged
 `dist/hpcsa-scrape.cjs` worker under `transferdesk-hpcsa.service` to seed the
 surname checklist. Enable `transferdesk-hpcsa.timer` only after that run

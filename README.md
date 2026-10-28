@@ -85,8 +85,11 @@ The register snapshot is scraped from the public HPCSA iRegister
   `bash script/run-hpcsa-bulk.sh` (or `--bulk C D` for specific letters).
   Progress is tracked in `script/hpcsa_bulk_state.json` — an interrupted
   sweep resumes where it stopped. Re-run after any interruption to finish.
-- The app server runs the full checklist automatically every 14 days
-  (`server/index.ts`). `HPCSA_NOW=1` forces a refresh ~15 s after boot (dev).
+- The web process does not refresh the register unless `HPCSA_AUTO_REFRESH=1`
+  (bulk export every 14 days, `server/index.ts`); production uses the separate
+  `transferdesk-hpcsa` service instead. `HPCSA_NOW=1` forces a refresh ~15 s
+  after boot (dev). Bulk resume state defaults to `/var/lib/transferdesk` when
+  that directory exists, otherwise `script/`.
 - When a referrer signup cannot be verified, the server appends the surname to
   the checklist and fetches that one surname immediately, so the next signup
   attempt can verify without waiting 14 days.
@@ -109,6 +112,8 @@ Neither route is implemented in this export. There are no `android/` or `ios/` p
 ## Safety and operations
 
 Technical access controls do not establish POPIA compliance. Production still needs hospital approval, operator agreements, a documented retention policy, independent tested backups, monitoring and a breach process. The existing browser alerts are not a guaranteed emergency notification service. Confirm P1 acknowledgement and retain a telephone escalation pathway.
+
+Rate limits for sign-in, sign-up, status lookup, the follow-up portal and submissions are held in the API process's memory. They assume one API process on one host: a restart resets them and each additional process multiplies the allowance. Add proxy-level or shared-store limits before running more than one instance. Account lockout after five failed sign-ins is stored in the database and is not affected.
 
 Only the dependency versions locked in this archive were checked during export. Dependencies, policies and clinical workflows require ongoing review.
 
