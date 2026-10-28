@@ -61,3 +61,16 @@ Production public-entry checks use `--public-only` with `TEST_BASE` set to the
 live origin. These checks do not establish real clinician acceptance, external
 notification delivery or manual verification quality; those still need pilot
 testing with the receiving teams.
+
+## Chat, roster and push screens (2026-10-28)
+
+A second default Glide run (job `lNbPCLmw7hmJdCnB564v`, 15 credits) added four mobile
+screens to the same [design page](https://uxpilot.ai/a/ui-design?page=cvlOiJaPeFpRofkHJ7yj):
+ReceivingCaseChat, ReferrerReply, TakingConsults and AlertsSettings.
+
+Adopted: elapsed time in the "waiting for referrer" banner, the question quoted in the
+referrer banner, a per-person "notifications are off, phone them" warning on the roster,
+and the "saved permanently in the referral record" note on the question box.
+
+Not adopted: generated placeholder content (devices, names), a bottom nav covering the
+composer, and a Save button in the Alerts header (the app saves thresholds on change).

@@ -13,7 +13,7 @@ import { Plus, Search, Phone, MessageCircle, LogOut, CalendarDays, ClipboardList
 import { PriorityPill, SectionHeading } from "./components/clinical-ui";
 import { ReferrerAuth } from "./referrer-auth";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { AwaitingReply, ImagePicker, Images, Timeline, messageOf, type UploadImage } from "./workflows";
+import { AwaitingReply, lastQuestion, ImagePicker, Images, Timeline, messageOf, type UploadImage } from "./workflows";
 import { PushToggle } from "./push";
 import type { Referral, Status, RosterSpec, RosterContact } from "@shared/schema";
 
@@ -75,7 +75,7 @@ function ReferralDetail({ r, onClose }: { r: Referral; onClose: () => void }) {
       <div className="space-y-1 text-xs text-muted-foreground"><p>{d.openedAt ? `Opened by ${d.openedBy || "the receiving team"}, ${ago(d.openedAt)}` : "Not yet opened by the receiving team"}</p><p>An opened receipt is not acceptance for transfer.</p></div><p className="text-lg font-semibold leading-relaxed">{d.diagnosis}</p>
       <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer text-sm font-semibold">Original referral & clinical details</summary><div className="pt-4 space-y-4"><div className="grid grid-cols-2 gap-4">{d.specialty && <Sec t="Specialty" v={specName(specs, d.specialty)}/>}{d.bedNeeded && <Sec t="Bed needed" v={d.bedNeeded}/>}</div><Sec t="History" v={d.history}/><Sec t="Examination" v={d.exam}/><Sec t="Investigations" v={d.investigations}/><Sec t="Request" v={d.reason}/></div></details>
       {d.decisionNote && <Card className="p-3 border-primary space-y-1"><p className="text-xs font-semibold uppercase tracking-wide text-primary">Clinical advice / decision</p><p className="text-sm whitespace-pre-wrap">{d.decisionNote}</p>{d.decidedBy && <p className="text-xs text-muted-foreground">By {d.decidedBy}{d.decidedAt && `, ${ago(d.decidedAt)}`}</p>}</Card>}
-      {d.awaitingInfoAt && !d.purgedAt && <AwaitingReply since={d.awaitingInfoAt} team={d.team}/>}
+      {d.awaitingInfoAt && !d.purgedAt && <AwaitingReply since={d.awaitingInfoAt} team={d.team} question={lastQuestion(d.timeline)}/>}
       <Images images={d.images} imageBase={detailPath}/>
       <section aria-label="Updates and response history" className="space-y-3"><h2 className="font-semibold">Updates and response history</h2><Timeline entries={d.timeline} imageBase={detailPath}/></section>
       {!d.purgedAt && <form className="space-y-4 rounded-xl border bg-card p-4" onSubmit={e => { e.preventDefault(); followup.mutate(); }}><label htmlFor="referrer-update" className="text-sm font-semibold">{d.awaitingInfoAt ? "Reply to the team's question" : "Send an update or follow-up question"}</label><Textarea id="referrer-update" value={body} onChange={e => setBody(e.target.value)} placeholder="New findings, results or a question for the receiving team" minLength={2} maxLength={5000} required/><details className="text-sm"><summary className="cursor-pointer font-medium text-primary">Attach clinical images (optional)</summary><div className="pt-3"><ImagePicker images={images} onChange={setImages}/></div></details><Button className="w-full" disabled={followup.isPending || body.trim().length < 2}>{followup.isPending ? "Sending..." : d.awaitingInfoAt ? "Send reply to the team" : "Send update to the team"}</Button></form>}
