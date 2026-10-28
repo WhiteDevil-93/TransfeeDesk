@@ -68,9 +68,9 @@ export function PushToggle({ target, label = "Push notifications" }: { target: P
   }
   if (!pushSupported()) return <p className="text-xs text-muted-foreground">{label} are not available in this browser. On an iPhone, add BaraBridge to the Home Screen first.</p>;
   return <div className="min-w-0 max-w-full space-y-1">
-    <Button type="button" size="sm" className="h-auto min-h-9 max-w-full whitespace-normal py-2 text-left" variant={on ? "outline" : "default"} disabled={busy || on === null} onClick={toggle} data-testid="button-push-toggle">
+    <Button type="button" size="sm" className="h-auto min-h-11 max-w-full whitespace-normal py-2 text-left" variant={on ? "outline" : "default"} disabled={busy || on === null} onClick={toggle} data-testid="button-push-toggle">
       {on ? <BellOff className="h-4 w-4 mr-1" /> : <Bell className="h-4 w-4 mr-1" />}{busy ? "Working..." : on ? `Turn off ${label.toLowerCase()} on this device` : `Turn on ${label.toLowerCase()}`}</Button>
-    {on && <p role="status" className="text-xs text-muted-foreground">{label} are on for this device, including when the app is closed.</p>}
+    {on && <p role="status" className="text-xs text-muted-foreground">{label} are on for this device. Delivery depends on your phone and network and is not guaranteed, so for a P1 keep phoning the unit.</p>}
     {err && <p role="alert" className="text-xs text-destructive">{err}</p>}
   </div>;
 }

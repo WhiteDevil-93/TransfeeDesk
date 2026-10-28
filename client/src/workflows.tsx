@@ -198,19 +198,19 @@ export function UnitRoster({me}: {me:User}) {
     <Input className="w-40" type="date" value={day} onChange={e=>e.target.value&&setDay(e.target.value)} aria-label="Roster date"/>
   </div>
   {editable ? <>
-    {members.length===0 && <p className="text-sm text-muted-foreground">No active accounts in this unit yet. Add the unit's staff on the <Link href="/admin" className="underline">Admin page</Link>, then tick who is taking consults here.</p>}
+    {members.length===0 && <p className="text-sm text-muted-foreground">No active accounts in this unit yet. Add the unit's staff on the <Link href="/admin" className="inline-flex min-h-11 items-center underline">Admin page</Link>, then tick who is taking consults here.</p>}
     <div className="space-y-2">{members.map(m=>{ const duty=dutyOf(m.id), on=duty!==undefined; return <div key={m.id} className={`flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border p-2 ${on?"border-primary bg-accent/40":""}`}>
-      <label className="flex min-w-52 items-center gap-2"><Checkbox checked={on} onCheckedChange={v=>toggle(m.id,v===true)} aria-label={`${m.name} is taking consults`} data-testid={`roster-member-${m.id}`}/><span className="font-medium">{m.name}</span><span className="text-xs text-muted-foreground">{ROLE_LABEL[m.role]||m.role}</span></label>
-      {on && <Input className="flex-1 min-w-40" value={duty} aria-label={`Duty for ${m.name}`} placeholder="Duty (e.g. consultant, night registrar)" onChange={ev=>setDuty(m.id,ev.target.value)}/>}
-      <span className={`text-xs ${m.pushDevices?"text-emerald-700":"text-amber-700"}`}>{m.pushDevices?`Push on · ${m.pushDevices} device${m.pushDevices>1?"s":""}`:"No push device"}</span>
-      {m.phone&&<a className="text-xs underline" href={`tel:${m.phone}`}>Call</a>}
+      <label className="flex min-h-11 min-w-52 cursor-pointer items-center gap-3"><Checkbox checked={on} onCheckedChange={v=>toggle(m.id,v===true)} aria-label={`${m.name} is taking consults`} data-testid={`roster-member-${m.id}`}/><span className="font-medium">{m.name}</span><span className="text-xs text-muted-foreground">{ROLE_LABEL[m.role]||m.role}</span></label>
+      {on && <Input className="h-11 flex-1 min-w-40" value={duty} aria-label={`Duty for ${m.name}`} placeholder="Duty (e.g. consultant, night registrar)" onChange={ev=>setDuty(m.id,ev.target.value)}/>}
+      <span className={`text-sm ${m.pushDevices?"text-emerald-700":"text-amber-700"}`}>{m.pushDevices?`Push on · ${m.pushDevices} device${m.pushDevices>1?"s":""}`:"No push device"}</span>
+      {m.phone&&<a className="inline-flex min-h-11 items-center px-2 text-sm underline" href={`tel:${m.phone}`}>Call {m.name}</a>}
     </div>;})}</div>
-    {former.map(e=><div key={e.userId} className="flex flex-wrap items-center gap-2 rounded-md border border-dashed p-2 text-sm"><span>A former team member is still on this roster.</span><Button size="sm" variant="ghost" onClick={()=>toggle(e.userId,false)}>Remove</Button></div>)}
+    {former.map(e=><div key={e.userId} className="flex flex-wrap items-center gap-2 rounded-md border border-dashed p-2 text-sm"><span>A former team member is still on this roster.</span><Button size="sm" className="min-h-11" variant="ghost" onClick={()=>toggle(e.userId,false)}>Remove</Button></div>)}
     {onDuty.length>0 && unreachable.length>0 && <p role="status" className="text-xs text-amber-800">{unreachable.map(m=>m.name).join(", ")} {unreachable.length>1?"have":"has"} not turned on push notifications and will only be alerted while the desk is open. They can turn it on from the bell in the top bar.</p>}
-    {members.length>0 && <div className="flex gap-2 items-center flex-wrap"><Button onClick={save} disabled={busy} data-testid="button-save-roster">{busy?"Saving…":"Save who is taking consults"}</Button>{!entries.length && <span className="text-xs text-muted-foreground">Nobody ticked: the whole unit will be notified.</span>}{saved&&<span role="status" className="text-sm text-primary">Saved</span>}</div>}
+    {members.length>0 && <div className="flex gap-2 items-center flex-wrap"><Button className="min-h-11" onClick={save} disabled={busy} data-testid="button-save-roster">{busy?"Saving…":"Save who is taking consults"}</Button>{!entries.length && <span className="text-xs text-muted-foreground">Nobody ticked: the whole unit will be notified.</span>}{saved&&<span role="status" className="text-sm text-primary">Saved</span>}</div>}
   </> : <>
     {!entries.length && <p className="text-sm text-muted-foreground">No unit roster entries for this date.</p>}
-    {entries.map(e=>{const m=members.find(x=>x.id===e.userId); const name=m?.name||(e as any).name||"Former team member", phone=m?.phone||(e as any).phone; return <p className="text-sm" key={e.userId}>{name} · {e.duty} {phone&&<a className="underline ml-2" href={`tel:${phone}`}>Call</a>}</p>;})}
+    {entries.map(e=>{const m=members.find(x=>x.id===e.userId); const name=m?.name||(e as any).name||"Former team member", phone=m?.phone||(e as any).phone; return <p className="text-sm" key={e.userId}>{name} · {e.duty} {phone&&<a className="ml-2 inline-flex min-h-11 items-center px-2 underline" href={`tel:${phone}`}>Call {name}</a>}</p>;})}
   </>}
   {err&&<p role="alert" className="text-sm text-destructive">{err}</p>}{roster?.updated_by && <p className="text-xs text-muted-foreground">Last changed by {roster.updated_by}, {new Date(roster.updated_at).toLocaleString()}</p>}
   </Card>;
