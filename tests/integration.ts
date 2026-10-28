@@ -54,7 +54,9 @@ try {
       await api("POST",`/api/referrals/${r.id}/shared`,{},token,404);
       await api("POST",`/api/referrals/${r.id}/portal-reset`,{},token,404);
     }
-    const initial=await api("POST","/api/portal",{ref:receipt.ref,code:receipt.followupCode});assert.equal(initial.openedAt,null);
+    const initial=await api("POST","/api/portal",{ref:receipt.ref,code:receipt.followupCode});assert.equal(initial.openedAt,null);assert(initial.portalToken);
+    const viaToken=async(path:string,body?:any,expected=200)=>{const x=await fetch(B+path,{method:"POST",headers:{"content-type":"application/json","x-portal-token":initial.portalToken},body:JSON.stringify(body??{})});assert.equal(x.status,expected,`${path} via portal token: ${x.status}`);return x.status===200?x.json():null;};
+    await fetch(B+"/api/portal",{method:"POST",headers:{"content-type":"application/json","x-portal-token":"forged.token"},body:"{}"}).then(x=>assert.equal(x.status,410));
     await api("POST","/api/portal",{ref:receipt.ref,code:"0".repeat(32)},undefined,404);
     const full=await api("GET",`/api/referrals/${r.id}`,undefined,creds[team].clinician.token);
     assert(!("portalHash" in full));assert.equal(full.images.length,1);
@@ -62,8 +64,8 @@ try {
     await api("GET",`/api/referrals/${r.id}/images/${full.images[0].id}`,undefined,creds[foreign].clinician.token,404);
     const opened=await api("POST","/api/portal",{ref:receipt.ref,code:receipt.followupCode});assert(opened.openedAt);assert.equal(opened.openedBy,creds[team].clinician.name);
     await api("PATCH",`/api/referrals/${r.id}`,{status:"advised",decisionNote:"QA clinical advice",decidedBy:"spoofed"},creds[team].clinician.token);
-    const advice=await api("POST","/api/portal",{ref:receipt.ref,code:receipt.followupCode});assert.equal(advice.status,"advised");assert.equal(advice.decidedBy,creds[team].clinician.name);assert.equal(advice.timeline[0].body,"QA clinical advice");
-    await api("POST","/api/portal/followup",{ref:receipt.ref,code:receipt.followupCode,body:"QA new clinical findings",images:[image]});
+    const advice=await viaToken("/api/portal");assert.equal(advice.status,"advised");assert.equal(advice.decidedBy,creds[team].clinician.name);assert.equal(advice.timeline[0].body,"QA clinical advice");
+    await viaToken("/api/portal/followup",{body:"QA new clinical findings",images:[image]});
     const updates=await api("GET","/api/referrals",undefined,creds[team].clinician.token);
     const unseen=(x:any)=>!!x.latestFollowupAt && (!x.followupSeenAt || x.latestFollowupAt>x.followupSeenAt);
     const updated=updates.find((x:any)=>x.id===r.id);assert(unseen(updated),"a new follow-up is flagged for the unit");

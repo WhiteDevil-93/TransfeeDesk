@@ -11,6 +11,7 @@ import { TEAMS, TEAM_NAMES, type Team } from "@shared/teams";
 import type { Followup,ImageAttachment,User } from "@shared/schema";
 import { askNotify,notify } from "./alerts";
 
+const PORTAL_HEADER="x-portal-token";
 export const messageOf=(e:any)=>{ try { return JSON.parse(String(e.message).replace(/^\d+:\s*/,"")).message; } catch { return "Request failed. Please try again."; } };
 export type UploadImage={name:string;mime:"image/jpeg";data:string};
 
@@ -49,10 +50,10 @@ export function ImagePicker({images,onChange}: {images:UploadImage[];onChange:(v
   </div>;
 }
 
-export function Images({images,referralId,credentials,imageBase}: {images?:ImageAttachment[];referralId?:number;credentials?:{ref:string;code:string};imageBase?:string}) {
+export function Images({images,referralId,portalToken,imageBase}: {images?:ImageAttachment[];referralId?:number;portalToken?:string;imageBase?:string}) {
   const [loaded,setLoaded]=useState<Record<number,string>>({}),[err,setErr]=useState("");
   async function load(im:ImageAttachment) {
-    try { const r=await (credentials ? apiRequest("POST",`/api/portal/image/${im.id}`,credentials) : apiRequest("GET",`${imageBase || `/api/referrals/${referralId}`}/images/${im.id}`));
+    try { const r=await (portalToken ? apiRequest("POST",`/api/portal/image/${im.id}`,undefined,{headers:{[PORTAL_HEADER]:portalToken!}}) : apiRequest("GET",`${imageBase || `/api/referrals/${referralId}`}/images/${im.id}`));
       const d=await r.json();setLoaded(x=>({...x,[im.id]:`data:${d.mime};base64,${d.data}`})); } catch(e) {setErr(messageOf(e));}
   }
   return <div className="space-y-2">{images?.map(im=><div key={im.id} className="border rounded p-2">
@@ -60,53 +61,68 @@ export function Images({images,referralId,credentials,imageBase}: {images?:Image
   </div>)}{err && <p className="text-sm text-destructive">{err}</p>}</div>;
 }
 
-export function Timeline({entries,referralId,credentials,imageBase}: {entries?:Followup[];referralId?:number;credentials?:{ref:string;code:string};imageBase?:string}) {
+export function Timeline({entries,referralId,portalToken,imageBase}: {entries?:Followup[];referralId?:number;portalToken?:string;imageBase?:string}) {
   return <div className="space-y-3">{entries?.map(e=><Card key={e.id} className={`p-3 space-y-2 ${e.kind==="advice" ? "border-primary" : ""}`}>
     <div className="flex justify-between flex-wrap gap-1 text-xs"><span className="font-semibold">{e.kind==="advice"?"Clinical advice":e.kind==="decision"?"Decision":"Clinical update"} · {e.author}</span><span className="text-muted-foreground">{new Date(e.createdAt).toLocaleString()}</span></div>
-    <p className="text-sm whitespace-pre-wrap">{e.body}</p><Images images={e.images} referralId={referralId} credentials={credentials} imageBase={imageBase} />
+    <p className="text-sm whitespace-pre-wrap">{e.body}</p><Images images={e.images} referralId={referralId} portalToken={portalToken} imageBase={imageBase} />
   </Card>)}</div>;
 }
 
 export function ReferrerPortal({initialRef="",initialCode=""}: {initialRef?:string;initialCode?:string}) {
-  const [ref,setRef]=useState(initialRef),[code,setCode]=useState(initialCode),[auth,setAuth]=useState<{ref:string;code:string}|null>(initialCode?{ref:initialRef,code:initialCode}:null);
+  const [ref,setRef]=useState(initialRef),[code,setCode]=useState(initialCode);
+  const [token,setToken]=useState(""),[active,setActive]=useState(false),[opening,setOpening]=useState(false);
+  const tokenRef=useRef("");
   const [data,setData]=useState<any>(null),[err,setErr]=useState(""),[body,setBody]=useState(""),[images,setImages]=useState<UploadImage[]>([]),[busy,setBusy]=useState(false),[sent,setSent]=useState(false);
   const last=useRef<{opened:string|null;count:number}|null>(null);
+  const ENDED=410;
+  const endSession=(message:string)=>{tokenRef.current="";setToken("");setActive(false);setData(null);last.current=null;setErr(message);};
+  const apply=(d:any)=>{
+    if(last.current && !last.current.opened && d.openedAt) notify("Referral opened",`${d.ref} was opened by the receiving team`,"opened-"+d.ref);
+    if(last.current && d.timeline.length>last.current.count && d.timeline.at(-1)?.kind!=="update") notify("Referral response",`A response is available for ${d.ref}`,"response-"+d.ref);
+    last.current={opened:d.openedAt,count:d.timeline.length};
+    tokenRef.current=d.portalToken;setToken(d.portalToken);setData(d);setErr("");
+  };
+  const withToken=()=>({headers:{[PORTAL_HEADER]:tokenRef.current}});
+  const ended=(e:any)=>String(e?.message||"").startsWith(String(ENDED));
+  async function open(refValue:string,codeValue:string) {
+    setOpening(true);setErr("");last.current=null;
+    try { apply(await (await apiRequest("POST","/api/portal",{ref:refValue.trim().toUpperCase(),code:codeValue.trim()})).json());setActive(true);setCode(""); }
+    catch(e){setErr(messageOf(e));} finally{setOpening(false);}
+  }
+  useEffect(()=>{ if(initialRef && initialCode) open(initialRef,initialCode); },[]);
   useEffect(()=>{
-    if(!auth) return; let alive=true;
+    if(!active) return; let alive=true;
     const refresh=async()=>{
-      try {const d=await (await apiRequest("POST","/api/portal",auth)).json();if(!alive)return;
-        if(last.current && !last.current.opened && d.openedAt) notify("Referral opened",`${d.ref} was opened by the receiving team`,"opened-"+d.ref);
-        if(last.current && d.timeline.length>last.current.count && d.timeline.at(-1)?.kind!=="update") notify("Referral response",`A response is available for ${d.ref}`,"response-"+d.ref);
-        last.current={opened:d.openedAt,count:d.timeline.length};setData(d);setErr("");
-      } catch(e) {if(alive)setErr(messageOf(e));}
+      try { const d=await (await apiRequest("POST","/api/portal",undefined,withToken())).json(); if(alive) apply(d); }
+      catch(e) { if(!alive) return; if(ended(e)) endSession(messageOf(e)); else setErr(messageOf(e)); }
     };
-    refresh();const t=setInterval(refresh,20000);return()=>{alive=false;clearInterval(t);};
-  },[auth]);
+    const t=setInterval(refresh,20000);return()=>{alive=false;clearInterval(t);};
+  },[active]);
   async function submit(e:any) {
     e.preventDefault();setBusy(true);setErr("");setSent(false);
-    try {await apiRequest("POST","/api/portal/followup",{...auth,body,images});setBody("");setImages([]);setSent(true);
-      const d=await(await apiRequest("POST","/api/portal",auth)).json();setData(d);
-    } catch(e){setErr(messageOf(e));} finally{setBusy(false);}
+    try {await apiRequest("POST","/api/portal/followup",{body,images},withToken());setBody("");setImages([]);setSent(true);
+      apply(await(await apiRequest("POST","/api/portal",undefined,withToken())).json());
+    } catch(e){ if(ended(e)) endSession(messageOf(e)); else setErr(messageOf(e)); } finally{setBusy(false);}
   }
   return <div className="max-w-2xl mx-auto space-y-4">
     <h1 className="text-xl font-semibold">Follow up a referral</h1>
     <p className="text-sm text-muted-foreground">Use the reference and private follow-up code from your receipt. This portal shows opened receipts, advice and responses, and accepts new clinical information.</p>
-    {!auth && <form className="space-y-3" onSubmit={e=>{e.preventDefault();last.current=null;setAuth({ref:ref.trim().toUpperCase(),code:code.trim()});}}>
-      <Input value={ref} onChange={e=>setRef(e.target.value)} placeholder="Referral reference" required data-testid="input-portal-ref" />
-      <Input value={code} onChange={e=>setCode(e.target.value)} placeholder="Private follow-up code" type="password" required data-testid="input-portal-code" />
-      <Button data-testid="button-portal-open">Open referral</Button>
+    {!active && <form className="space-y-3" onSubmit={e=>{e.preventDefault();open(ref,code);}}>
+      <Input value={ref} onChange={e=>setRef(e.target.value)} placeholder="Referral reference" aria-label="Referral reference" required data-testid="input-portal-ref" />
+      <Input value={code} onChange={e=>setCode(e.target.value)} placeholder="Private follow-up code" aria-label="Private follow-up code" type="password" autoComplete="off" required data-testid="input-portal-code" />
+      <Button disabled={opening} data-testid="button-portal-open">{opening?"Opening…":"Open referral"}</Button>
     </form>}
     {err && <p className="text-sm text-destructive" role="alert">{err}</p>}
-    {auth && <div className="flex gap-2"><Button size="sm" variant="outline" onClick={()=>askNotify()}>Enable opened / response notifications</Button><Button size="sm" variant="ghost" onClick={()=>{setAuth(null);setData(null);setCode("");}}>Close portal</Button></div>}
+    {active && <div className="flex gap-2"><Button size="sm" variant="outline" onClick={()=>askNotify()}>Enable opened / response notifications</Button><Button size="sm" variant="ghost" onClick={()=>endSession("")}>Close portal</Button></div>}
     {data && <>
       <Card className="p-4 space-y-2"><p className="font-mono font-semibold">{data.ref} · {data.team} · {data.status}</p>
         <p className="text-sm" data-testid="text-opened">{data.openedAt ? `Opened by ${data.openedBy}, ${new Date(data.openedAt).toLocaleString()}` : "Not yet opened by the receiving team"}</p>
         {data.decidedBy && <p className="text-xs text-muted-foreground">Responded by {data.decidedBy}, {new Date(data.decidedAt).toLocaleString()}</p>}
-        <p className="text-xs text-muted-foreground">An opened receipt does not mean the referral has been accepted. This page refreshes every 20 seconds; browser notifications require it to remain open.</p>
+        <p className="text-xs text-muted-foreground">An opened receipt does not mean the referral has been accepted. This page refreshes every 20 seconds; browser notifications require it to remain open. The session ends after 30 minutes without a refresh, and you then enter the code again.</p>
       </Card>
-      <Images images={data.images} credentials={auth!} /><Timeline entries={data.timeline} credentials={auth!} />
-      <Card className="p-4"><form onSubmit={submit} className="space-y-3"><Label>Follow-up / new clinical information</Label>
-        <Textarea value={body} onChange={e=>setBody(e.target.value)} rows={4} minLength={2} maxLength={5000} required placeholder="New examination findings, investigations, deterioration or a follow-up question" data-testid="input-followup" />
+      <Images images={data.images} portalToken={token} /><Timeline entries={data.timeline} portalToken={token} />
+      <Card className="p-4"><form onSubmit={submit} className="space-y-3"><Label htmlFor="portal-followup">Follow-up / new clinical information</Label>
+        <Textarea id="portal-followup" value={body} onChange={e=>setBody(e.target.value)} rows={4} minLength={2} maxLength={5000} required placeholder="New examination findings, investigations, deterioration or a follow-up question" data-testid="input-followup" />
         <ImagePicker images={images} onChange={setImages}/><Button disabled={busy} data-testid="button-followup-send">{busy?"Sending…":"Send follow-up to the team"}</Button>
         {sent && <p className="text-sm text-primary" role="status">Update sent. The team will see it marked as new.</p>}
       </form></Card>

@@ -35,4 +35,4 @@ export type AuditRow = { id:number; at:string; userName:string; action:string; r
 export type AppSettings = { p1:number; p2:number; p3:number; repeat:number; sound:boolean; retentionDays:number; responsibleParty:string; infoOfficer:string; infoOfficerEmail:string; infoOfficerPhone:string };
 export type ImageAttachment = { id:number; name:string; mime:string; data?:string; createdAt:string; followupId:number|null };
 export type Followup = { id:number; createdAt:string; author:string; kind:"update"|"advice"|"decision"; body:string; images?:ImageAttachment[] };
-export const followupInput = z.object({ ref:z.string().max(30), code:z.string().max(100), body:z.string().min(2).max(5000), images:z.array(imageInput).max(3).default([]) });
+export const followupInput = z.object({ ref:z.string().max(30).optional(), code:z.string().max(100).optional(), body:z.string().min(2).max(5000), images:z.array(imageInput).max(3).default([]) });

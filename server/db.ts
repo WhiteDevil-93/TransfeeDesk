@@ -169,10 +169,15 @@ export const db = {
     catch(e) { await sb.from("referrals").delete().eq("id",r.id); throw e; }
     return {...r, followupCode:code};
   },
-  async portal(ref:string,code:string):Promise<Referral|null> {
+  async portalLogin(ref:string,code:string):Promise<{referral:Referral;portalHash:string}|null> {
     if(!/^[a-f0-9]{32}$/.test(code)) return null;
     const r:any=chk(await sb.from("referrals").select("*").eq("ref",ref.trim().toUpperCase()).eq("portal_hash",sha(code)).maybeSingle());
-    return r && !r.purged_at ? publicReferral(r) : null;
+    return r && !r.purged_at ? { referral: publicReferral(r), portalHash: r.portal_hash } : null;
+  },
+  async portal(ref:string,code:string):Promise<Referral|null> { return (await this.portalLogin(ref,code))?.referral ?? null; },
+  async portalById(id:number):Promise<{referral:Referral;portalHash:string}|null> {
+    const r:any=chk(await sb.from("referrals").select("*").eq("id",id).maybeSingle());
+    return r && !r.purged_at ? { referral: publicReferral(r), portalHash: r.portal_hash } : null;
   },
   async resetPortal(id:number) { const code=crypto.randomBytes(16).toString("hex"); chk(await sb.from("referrals").update({portal_hash:sha(code)}).eq("id",id)); return code; },
   // seenUpTo is the latest_followup_at the viewer is being shown, so a follow-up
