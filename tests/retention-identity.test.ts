@@ -93,17 +93,16 @@ test("referrer profile email changes cannot take another account's address", asy
   });
 });
 
-test("a verified referrer who changes name or HPCSA number goes back to the admin, flagged when the register matches", async t => {
+test("identity edits automatically verify register matches and atomically revoke unmatched identities", async t => {
   const stored = { name: "Jane Smith", hpcsaNumber: "MP0123456" };
   t.mock.method(db, "sessionUser", async () => ({ id: 3, role: "referrer", ...stored, verifyStatus: "verified", mustChange: false }) as any);
   t.mock.method(db, "audit", async () => {});
   t.mock.method(db, "emailTaken", async () => false);
-  const updates: any[] = [], identityEdits: boolean[] = [];
-  t.mock.method(db, "updateReferrer", async (_id: number, b: any, _before: any, changed: boolean) => (identityEdits.push(changed), updates.push(b), { id: 3, name: b.name ?? stored.name, hpcsaNumber: b.hpcsa !== undefined ? normalizeHpcsaNumber(b.hpcsa) : stored.hpcsaNumber, verifyStatus: "verified" }) as any);
+  const updates: any[] = [], identityEdits: boolean[] = [], matchedResults: boolean[] = [];
+  t.mock.method(db, "updateReferrer", async (_id: number, b: any, _before: any, changed: boolean, matched: boolean) => (identityEdits.push(changed), matchedResults.push(matched), updates.push(b), { id: 3, name: b.name ?? stored.name, hpcsaNumber: b.hpcsa !== undefined ? normalizeHpcsaNumber(b.hpcsa) : stored.hpcsaNumber, verifyStatus: "verified" }) as any);
   let registered: any[] = [];
   const lookup = t.mock.method(db, "hpcsaLookup", async () => ({ rows: registered }) as any);
   const demote = t.mock.method(db, "demoteReferrer", async () => {});
-  const marked = t.mock.method(db, "markHpcsaMatched", async () => {});
   const entry = (full_name: string, hpcsa_number: string, status = "ACTIVE") => ({ full_name, hpcsa_number, status });
   const update = async (base: string, body: any) => (await post(`${base}/api/referrer/profile`, body, "t")).json();
   await withApp(async base => {
@@ -118,17 +117,17 @@ test("a verified referrer who changes name or HPCSA number goes back to the admi
     assert.equal(renamed.reverify, true);
     assert.equal(identityEdits.at(-1), true, "the identity write must revoke verification atomically");
 
-    assert.equal(marked.mock.callCount(), 0);
+    assert.equal(matchedResults.at(-1), false);
 
     registered = [entry("BROWN JANE", "MP 0123456")];
-    assert.equal((await update(base, { name: "Jane Brown" })).reverify, true, "the public register cannot prove the new identity is this person");
+    assert.equal((await update(base, { name: "Jane Brown" })).reverify, undefined, "a matching new identity is automatically verified");
     assert.equal(identityEdits.at(-1), true);
-    assert.equal(marked.mock.callCount(), 1, "a register match is flagged for the administrator");
+    assert.equal(matchedResults.at(-1), true, "the matching result is part of the identity write");
 
     registered = [entry("SMITH JANE", "MP0123456", "REMOVED")];
     assert.equal((await update(base, { hpcsa: "MP 0999999" })).reverify, true);
     assert.equal(identityEdits.at(-1), true, "a number that is not on the register is not trusted");
-    assert.equal(marked.mock.callCount(), 1);
+    assert.equal(matchedResults.at(-1), false);
   });
 });
 

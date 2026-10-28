@@ -112,10 +112,11 @@ export const db = {
       username: b.username.toLowerCase().trim(), name: b.name, role: "referrer", team: null,
       email: b.email.trim().toLowerCase(), phone: b.phone, hospital: b.hospital, department: b.department, specialty: b.specialty,
       profession: b.profession, hpcsa_number: normalizeHpcsaNumber(b.hpcsa), verify_status: b.verifyStatus,
+      verified_at: b.verifyStatus === "verified" ? new Date().toISOString() : null,
       pass_hash: await hashPw(b.password), must_change: false,
     }).select().single()));
   },
-  async updateReferrer(id: number, b: { name?: string; email?: string; phone?: string; hospital?: string; department?: string; specialty?: string; profession?: string; hpcsa?: string }, before: Pick<User, "name" | "hpcsaNumber" | "verifyStatus">, identityChanged = false) {
+  async updateReferrer(id: number, b: { name?: string; email?: string; phone?: string; hospital?: string; department?: string; specialty?: string; profession?: string; hpcsa?: string }, before: Pick<User, "name" | "hpcsaNumber" | "verifyStatus">, identityChanged = false, registerMatched = false) {
     const n: any = {};
     if (b.name !== undefined) n.name = b.name;
     if (b.email !== undefined) n.email = b.email.trim().toLowerCase();
@@ -126,9 +127,9 @@ export const db = {
     if (b.profession !== undefined) n.profession = b.profession;
     if (b.hpcsa !== undefined) n.hpcsa_number = normalizeHpcsaNumber(b.hpcsa);
     if (!Object.keys(n).length) return this.userById(id);
-    // Revoke approval in the SAME write as the identity edit. Compare the
-    // authenticated snapshot so a concurrent approval/edit cannot be overwritten.
-    if (identityChanged) Object.assign(n, { verify_status: "card_pending", verified_at: null });
+    // Apply the register result in the SAME write as the identity edit. Compare
+    // the authenticated snapshot so a concurrent approval/edit cannot be overwritten.
+    if (identityChanged) Object.assign(n, { verify_status: registerMatched ? "verified" : "card_pending", verified_at: registerMatched ? new Date().toISOString() : null });
     const row = chk(await sb.from("users").update(n).eq("id", id).eq("role", "referrer")
       .eq("name", before.name).eq("hpcsa_number", before.hpcsaNumber || "").eq("verify_status", before.verifyStatus)
       .select("*").maybeSingle());
@@ -145,9 +146,12 @@ export const db = {
     const rows = (chk(await sb.from("users").select("*").eq("role", "referrer").in("verify_status", ["card_pending", "hpcsa"]).order("name")) as any[]);
     return rows.map((u) => ({ id: u.id, username: u.username, name: u.name, email: u.email || "", phone: u.phone || "", hospital: u.hospital || "", hpcsa: u.hpcsa_number || "", hpcsaMatched: u.verify_status === "hpcsa", profession: u.profession || "", hasCard: !!u.card_cipher, createdAt: u.created_at }));
   },
-  async markHpcsaMatched(id: number, identity: { name: string; hpcsaNumber: string }) {
-    chk(await sb.from("users").update({ verify_status: "hpcsa" }).eq("id", id).eq("role", "referrer")
-      .eq("name", identity.name).eq("hpcsa_number", identity.hpcsaNumber).neq("verify_status", "verified"));
+  async verifyMatchedReferrer(id: number, identity: Pick<User, "name" | "hpcsaNumber" | "verifyStatus">) {
+    const row = chk(await sb.from("users").update({ verify_status: "verified", verified_at: new Date().toISOString() })
+      .eq("id", id).eq("role", "referrer").eq("active", true)
+      .eq("name", identity.name).eq("hpcsa_number", identity.hpcsaNumber || "").eq("verify_status", identity.verifyStatus)
+      .in("verify_status", ["hpcsa", "card_pending"]).select("*").maybeSingle());
+    return row ? userOut(row) : null;
   },
   async approveReferrer(id: number) {
     return (chk(await sb.from("users").update({ verify_status: "verified", verified_at: new Date().toISOString() }).eq("id", id).eq("role", "referrer").select("id")) as any[]).length > 0;

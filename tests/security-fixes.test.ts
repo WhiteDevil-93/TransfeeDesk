@@ -93,15 +93,14 @@ test("changing a password ends the account's other sessions", async t => {
   } finally { await close(); }
 });
 
-test("referrer verification: register matches need an admin, identity changes are re-checked, cards are validated", async t => {
-  const added: any[] = [], marked: number[] = [], identityEdits: boolean[] = [];
+test("referrer verification: register matches automatically approve, identity changes are re-checked, cards are validated", async t => {
+  const added: any[] = [], identityEdits: boolean[] = [];
   t.mock.method(db, "sessionUser", async (token: string) => people.find(u => String(u.id) === token) || null);
   t.mock.method(db, "audit", async () => {});
   t.mock.method(db, "userByIdentity", async () => null);
   t.mock.method(db, "hpcsaLookup", async () => ({ number: "MP0123456", name: "", rows: [{ full_name: "Jane Smith", hpcsa_number: "MP0123456", status: "ACTIVE" }] }));
   t.mock.method(db, "addReferrer", async (b: any) => { added.push(b); return { id: 30, username: b.username } as any; });
-  t.mock.method(db, "updateReferrer", async (_id, _b, _before, changed) => { identityEdits.push(changed); return people[4]; });
-  t.mock.method(db, "markHpcsaMatched", async (id: number) => { marked.push(id); });
+  t.mock.method(db, "updateReferrer", async (_id, body, _before, changed) => { identityEdits.push(changed); return { ...people[3], ...body }; });
   const demoted: number[] = [];
   t.mock.method(db, "demoteReferrer", async (id: number) => { demoted.push(id); });
   t.mock.method(db, "emailTaken", async () => false);
@@ -112,13 +111,13 @@ test("referrer verification: register matches need an admin, identity changes ar
     const signup = await request(null, "/api/referrer/signup", "POST", { username: "jsmith", password: "long-enough-password", name: "Jane Smith", email: "jane@example.invalid", phone: "0710000000", specialty: "Emergency", profession: "doctor", hpcsa: "MP 0123456", hospital: "QA Hospital" });
     assert.equal(signup.status, 200);
     const body = await signup.json();
-    assert.equal(body.autoApproved, false);
+    assert.equal(body.autoApproved, true);
     assert.equal(body.hpcsaMatched, true);
-    assert.equal(added[0].verifyStatus, "hpcsa", "a public-register match is flagged, never verified");
+    assert.equal(added[0].verifyStatus, "verified", "a matching eligible registration automatically verifies");
     assert.equal(added[0].hospital, "QA Hospital");
     assert.equal((await (await request("7", "/api/referrer/profile", "POST", { hpcsa: "mp 0123456", phone: "0720000000" })).json()).reverify, undefined, "same number, reformatted, is not a change");
     assert.deepEqual(demoted, []);
-    assert.equal((await (await request("7", "/api/referrer/profile", "POST", { hpcsa: "MP9999999" })).json()).reverify, true, "a verified referrer who changes number is re-verified by an admin");
+    assert.equal((await (await request("7", "/api/referrer/profile", "POST", { hpcsa: "MP9999999" })).json()).reverify, true, "a mismatching number requires review");
     assert.equal(identityEdits.at(-1), true, "profile mutation itself revokes verification"); assert.deepEqual(demoted, []);
     const png = { name: "card.png", mime: "image/png", data: Buffer.from("not really a png").toString("base64") };
     assert.equal((await request("7", "/api/referrer/card", "POST", { image: png })).status, 409, "verified accounts are not downgraded by a card upload");
@@ -148,7 +147,8 @@ test("rate-limit state for attacker-chosen keys is pruned", async t => {
     const before = rateLimitKeyCount();
     for (let i = 0; i < 25; i++) await request(null, "/api/status", "POST", { ref: `TX-PROBE-${i}`, phone: "0710000000" });
     assert.ok(rateLimitKeyCount() >= before + 25);
-    pruneHits(Date.now() + 2 * 3600e3);
+    // Sign-up/profile miss paths also add a 24-hour surname-refresh key.
+    pruneHits(Date.now() + 25 * 3600e3);
     assert.equal(rateLimitKeyCount(), 0);
   } finally { await close(); }
 });

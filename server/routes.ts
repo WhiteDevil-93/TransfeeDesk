@@ -10,6 +10,7 @@ import { TEAMS, canAccess, canManage, type Team } from "@shared/teams";
 import { z } from "zod";
 import { appendChecklistSurnames, searchIRegister } from "../script/hpcsa-scrape";
 import { hpcsaIdentityMatches, normalizeHpcsaNumber } from "./hpcsa-verification";
+import { verifyPendingReferrer } from "./referrer-verification";
 import { issuePortalToken, portalFingerprint, readPortalToken } from "./portal-session";
 import { notifyFollowup, notifyNewReferral, notifyQuestion, notifyResponse, saToday } from "./notify";
 import { allowedPushEndpoint, pushEnabled, pushPublicKey } from "./push";
@@ -144,8 +145,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   const auth = (adminOnly = false) => async (req: Request, res: Response, next: NextFunction) => {
     try {
       const t = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-      const u = t && await db.sessionUser(t);
+      let u = t && await db.sessionUser(t);
       if (!u) return res.status(401).json({ message: "Session expired. Please sign in again." });
+      if (req.method === "GET" && ["/api/me", "/api/referrer/profile"].includes(req.path)) u = await verifyPendingReferrer(u);
+      if (u.active === false) return res.status(401).json({ message: "Session expired. Please sign in again." });
       if (u.mustChange && u.role !== "referrer" && !req.path.startsWith("/api/me")) return res.status(403).json({ message: "Password change required" });
       if (adminOnly && u.role !== "admin") return res.status(403).json({ message: "Admins only" });
       (req as AuthReq).user = u; (req as AuthReq).token = t; next();
@@ -301,7 +304,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     await db.updateUser(u.id, { failed: 0, locked_until: null, last_login: new Date().toISOString() });
     const token = await db.createSession(u.id);
     await db.audit({ userId: u.id, userName: u.name, action: "login", ip });
-    res.json({ token, user: await db.sessionUser(token) });
+    const user = await db.sessionUser(token);
+    res.json({ token, user: user ? await verifyPendingReferrer(user) : user });
   }));
 
   app.get("/api/me", A, wrap(async (req, res) => {
@@ -334,19 +338,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (existing) return res.status(409).json({ message: "An account already exists for that username or email" });
     const d = p.data;
     const hpcsa = normalizeHpcsaNumber(d.hpcsa);
-    // The HPCSA register is public, so a name + number match only proves the
-    // person exists, not that this sign-up is them. A match is flagged for the
-    // administrator ("hpcsa") but never verifies the account on its own.
+    // The owner's policy: matching professional name, registration number and
+    // eligible register status verify the account without administrator approval.
     let verifyStatus = "card_pending";
     let hpcsaMatched = false;
     try {
       if (hpcsa) {
         const hits = await db.hpcsaLookup(d.name, hpcsa);
-        const byNum = hits.rows.find(r => normalizeHpcsaNumber(r.hpcsa_number) === hpcsa);
+        const byNum = hits.rows.find(r => hpcsaIdentityMatches(d.name, hpcsa, r)) || hits.rows.find(r => normalizeHpcsaNumber(r.hpcsa_number) === hpcsa);
         if (byNum) {
           const status = String(byNum.status).toUpperCase();
           const identityMatches = hpcsaIdentityMatches(d.name, hpcsa, byNum);
-          if (identityMatches) { verifyStatus = "hpcsa"; hpcsaMatched = true; }
+          if (identityMatches) { verifyStatus = "verified"; hpcsaMatched = true; }
           else { verifyStatus = "card_pending"; queueSurnameForRefresh(d.name); }
           await audit(req, "hpcsa_check", null, `num=${hpcsa} status=${status || "n/a"} identityMatch=${identityMatches}`);
         } else {
@@ -366,13 +369,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     let u;
     try { u = await db.addReferrer({ ...d, username: String(username), password: String(password), hpcsa, verifyStatus }); }
     catch (e) { if (isUniqueViolation(e)) return res.status(409).json({ message: "An account already exists for that username or email" }); throw e; }
-    await db.audit({ action: "referrer_signup", detail: `${u.username}${hpcsaMatched ? " (HPCSA register match, awaiting admin confirmation)" : ""}`, ip: ipOf(req) });
+    await db.audit({ action: "referrer_signup", detail: `${u.username}${hpcsaMatched ? " (automatically verified by register match)" : ""}`, ip: ipOf(req) });
     res.json({
       ok: true,
-      autoApproved: false,
+      autoApproved: hpcsaMatched,
       hpcsaMatched,
       message: hpcsaMatched
-        ? "Account created and matched to the HPCSA register. An administrator will confirm your account before you can send referrals; uploading your staff card speeds this up."
+        ? "Account verified automatically against the professional register. You can send referrals now."
         : "Account created. Please upload a photo of your staff card. You can send referrals after verification.",
     });
   }));
@@ -385,30 +388,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const sameName = (a: string, b: string) => a.trim().replace(/\s+/g, " ").toLowerCase() === b.trim().replace(/\s+/g, " ").toLowerCase();
     const identityChanged = (p.data.name !== undefined && !sameName(p.data.name, before.name)) ||
       (p.data.hpcsa !== undefined && normalizeHpcsaNumber(p.data.hpcsa) !== normalizeHpcsaNumber(before.hpcsaNumber || ""));
-    let u;
-    try { u = await db.updateReferrer(req.user.id, p.data, before, identityChanged); }
+    const name = p.data.name ?? before.name, number = normalizeHpcsaNumber(p.data.hpcsa ?? before.hpcsaNumber ?? "");
+    let registerMatched = false;
+    if (identityChanged && number) {
+      try { const hits = await db.hpcsaLookup(name, number); registerMatched = hits.rows.some(r => hpcsaIdentityMatches(name, number, r)); }
+      catch { await audit(req, "hpcsa_check", null, "Register lookup unavailable during profile update"); }
+    }
+    try { await db.updateReferrer(req.user.id, p.data, before, identityChanged, registerMatched); }
     catch (e) {
       if (isUniqueViolation(e)) return emailTaken();
       if ((e as Error)?.message === "REFERRER_PROFILE_CONFLICT") return res.status(409).json({ message: "Your profile or verification changed. Reload your profile and try again." });
       throw e;
     }
-    const name = u?.name ?? before.name, number = normalizeHpcsaNumber(u?.hpcsaNumber ?? "");
-    const reverify = identityChanged && before.verifyStatus === "verified";
-    if (identityChanged) {
-      // Verification belongs to the identity that was checked, and the public
-      // register cannot prove a new one belongs to this person, so any change
-      // goes back to the administrator; a register match is only flagged.
-      let match = false;
-      if (number) {
-        try { const hits = await db.hpcsaLookup(name, number); match = hits.rows.some(r => hpcsaIdentityMatches(name, number, r)); }
-        catch (e: any) { await audit(req, "hpcsa_check", null, `lookup error: ${e?.message}`); }
-      }
-      if (match) await db.markHpcsaMatched(req.user.id, { name, hpcsaNumber: number });
-      else queueSurnameForRefresh(name);
-    }
-    await db.audit({ userId: req.user.id, userName: req.user.name, action: reverify ? "referrer_reverify_required" : "referrer_profile_updated", ip: ipOf(req) });
+    const reverify = identityChanged && !registerMatched;
+    if (reverify) queueSurnameForRefresh(name);
+    await db.audit({ userId: req.user.id, userName: req.user.name, action: reverify ? "referrer_reverify_required" : identityChanged ? "referrer_auto_verified" : "referrer_profile_updated", ip: ipOf(req) });
     res.json(reverify
-      ? { ok: true, reverify: true, message: "Your name or HPCSA number changed, so your account is back in the verification queue until an administrator confirms it. Upload your staff card if you have not already." }
+      ? { ok: true, reverify: true, message: "Your updated name and registration number could not be matched to an eligible register record. Check your details or upload your staff card for review." }
       : { ok: true });
   }));
   app.post("/api/referrer/card", REF, isReferrer, wrap(async (req, res) => {

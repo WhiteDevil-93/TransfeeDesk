@@ -2,6 +2,10 @@
 import express from "express";
 import { createServer } from "node:http";
 import path from "node:path";
+import os from "node:os";
+process.env.HPCSA_CHECKLIST = path.join(os.tmpdir(), `bb-navigation-${process.pid}.txt`);
+const realFetch = globalThis.fetch;
+globalThis.fetch = ((input: any, init?: any) => String(input?.url ?? input).startsWith("http://127.0.0.1:") ? realFetch(input, init) : Promise.reject(Error("external network disabled in navigation fixture"))) as typeof fetch;
 process.env.APP_DB_SECRET = "navigation-fixture-secret-with-at-least-thirty-two-characters";
 process.env.SUPABASE_URL = "https://example.supabase.co";
 process.env.SUPABASE_PUBLISHABLE_KEY = "navigation-fixture-key";
@@ -17,13 +21,19 @@ const users: any[] = [
   { id: 6, username: "unit_meu", name: "QA MEU Unit Admin", role: "unit_admin", team: "MEU" },
   { id: 7, username: "unit_teu", name: "QA TEU Unit Admin", role: "unit_admin", team: "TEU" },
 ].map(u => ({ active: true, must_change: false, phone: "0700000000", specialty: "Emergency Medicine", profession: "doctor", pass_hash: fixtureHash, ...u }));
-const safe = (u: any) => ({ id: u.id, username: u.username, name: u.name, role: u.role, team: u.team, phone: u.phone, active: u.active, mustChange: u.must_change, specialty: u.specialty, profession: u.profession, verifyStatus: u.verify_status || "none", hasCard: !!u.card_cipher });
+const safe = (u: any) => ({ id: u.id, username: u.username, name: u.name, role: u.role, team: u.team, phone: u.phone, active: u.active, mustChange: u.must_change, specialty: u.specialty, profession: u.profession, hpcsaNumber: u.hpcsa_number || "", verifyStatus: u.verify_status || "none", hasCard: !!u.card_cipher });
 const baseUserCount = users.length;
 const tokens = new Map<string, number>();
 const records: any[] = [];
 const updates: any[] = [];
 const state = db as any;
 state.userByName = async (name: string) => users.find(u => u.username === name);
+state.userByIdentity = async (name: string, email: string) => users.find(u => u.username === name || u.email === email);
+state.hpcsaLookup = async (_name: string, number: string) => ({ rows: ["MP0123456", "12345678"].includes(number) ? [{ surname: "REFERRER", full_name: "QA MATCHING", hpcsa_number: number, status: "ACTIVE" }] : [] });
+state.addReferrer = async (body: any) => {
+  const user = { ...users[3], ...body, id: users.length + 1, card_cipher: null, hpcsa_number: body.hpcsa, verify_status: body.verifyStatus, pass_hash: await hashPw(body.password) };
+  users.push(user); return safe(user);
+};
 state.createSession = async (id: number) => { const token = `fixture-${id}`; tokens.set(token, id); return token; };
 state.sessionUser = async (token: string) => { const u = users.find(u => u.id === tokens.get(token)); return u ? safe(u) : null; };
 state.endSession = async (token: string) => { tokens.delete(token); };
@@ -65,7 +75,6 @@ app.get("/api/unit-members", (_req, res) => res.json([]));
 app.get("/api/unit-roster", (_req, res) => res.json({ entries: [] }));
 app.post("/api/fixture/expire", (_req, res) => { tokens.clear(); res.json({ ok: true }); });
 app.post("/api/fixture/reset", (_req, res) => { tokens.clear(); records.length = 0; updates.length = 0; users.splice(baseUserCount); for (const u of users) { u.pass_hash = fixtureHash; u.must_change = u.username === "temporary"; u.card_cipher = null; } res.json({ ok: true }); });
-app.post("/api/referrer/signup", async (req, res) => { users.push({ ...users[3], ...req.body, role: "referrer", id: users.length + 1, card_cipher: null, pass_hash: await hashPw(req.body.password) }); res.json({ autoApproved: false, message: "Upload your staff card before sending." }); });
 const server = createServer(app); await registerRoutes(server, app);
 app.use("/api", (_req, res) => res.status(404).json({ message: "Unhandled fixture endpoint" }));
 app.use(express.static(path.resolve("dist/public")));

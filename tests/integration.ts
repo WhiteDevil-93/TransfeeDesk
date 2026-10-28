@@ -41,18 +41,31 @@ try {
   assert.equal(profile.profile.hospital,"QA Facility");assert.equal(profile.profile.department,"ED");
   const register=await sb.from("hpcsa_register").insert({surname:"Referrer",full_name:"QA Referrer",registration_number:"QA-"+run,hpcsa_number:"MP0999999",status:"ACTIVE",source:registerSource});
   assert.ifError(register.error);
-  const changed=await api("POST","/api/referrer/profile",{hpcsa:"MP0999999"},referrerToken);assert.equal(changed.reverify,true);
-  let account=await db.userById(referrer.id);assert.equal(account?.verifyStatus,"hpcsa","a register match never re-approves a changed identity");
-  assert((await api("GET","/api/pending-referrers",undefined,rootToken)).some((u:any)=>u.id===referrer.id&&u.hpcsaMatched));
-  await api("GET","/api/referrer/roster",undefined,referrerToken,403);
+  // Real HTTP sign-up, real imported-record shape, real persistence and session.
+  for(const [profession,name,number] of [["doctor","QA Referrer","MP0999999"],["nurse","QA Nurse","12345678"]]){
+    if(profession==="nurse")assert.ifError((await sb.from("hpcsa_register").insert({surname:"Nurse",full_name:"QA",registration_number:"QA-NURSE-"+run,hpcsa_number:number,status:"ACTIVE",source:registerSource})).error);
+    const username=`qa_auto_${profession}_${run}`;
+    const result=await api("POST","/api/referrer/signup",{username,password,name,email:`${username}@example.invalid`,phone:"0700000000",specialty:"Emergency",profession,hpcsa:number});
+    assert.equal(result.autoApproved,true);const saved=await db.userByName(username);assert(saved);createdUsers.push(saved.id);
+    assert.equal(saved.verify_status,"verified");assert(saved.verified_at);
+    const session=await api("POST","/api/login",{username,password});assert.equal(session.user.verifyStatus,"verified");
+    await api("GET","/api/referrer/roster",undefined,session.token);
+    assert.equal((await api("GET","/api/me",undefined,session.token)).user.verifyStatus,"verified");
+  }
+  const waiting=await db.addReferrer({username:`qa_waiting_${run}`,name:"QA Referrer",password,email:`qa-waiting-${run}@example.invalid`,phone:"0700000000",hospital:"",department:"",specialty:"Emergency",profession:"doctor",hpcsa:"MP0999999",verifyStatus:"hpcsa"});createdUsers.push(waiting.id);
+  assert.equal((await api("POST","/api/login",{username:waiting.username,password})).user.verifyStatus,"verified","existing pending matches verify on authenticated sign-in");
+  const changed=await api("POST","/api/referrer/profile",{hpcsa:"MP0999999"},referrerToken);assert.equal(changed.reverify,undefined);
+  let account=await db.userById(referrer.id);assert.equal(account?.verifyStatus,"verified","matching identity automatically verifies");
+  assert(!(await api("GET","/api/pending-referrers",undefined,rootToken)).some((u:any)=>u.id===referrer.id));
+  await api("GET","/api/referrer/roster",undefined,referrerToken);
   await db.approveReferrer(referrer.id);
   assert.deepEqual(await api("POST","/api/referrer/profile",{hpcsa:"mp 0999999",phone:"0710000000"},referrerToken),{ok:true});
   assert.equal((await db.userById(referrer.id))?.verifyStatus,"verified","formatting/contact-only edits preserve approval");
-  assert.ifError((await sb.from("hpcsa_register").update({full_name:"QA Changedreferrer"}).eq("source",registerSource)).error);
-  assert.equal((await api("POST","/api/referrer/profile",{name:"QA Changedreferrer"},referrerToken)).reverify,true);
-  account=await db.userById(referrer.id);assert(account);assert.equal(account.verifyStatus,"hpcsa");
+  assert.ifError((await sb.from("hpcsa_register").update({surname:"Changedreferrer",full_name:"QA"}).eq("hpcsa_number","MP0999999").eq("source",registerSource)).error);
+  assert.equal((await api("POST","/api/referrer/profile",{name:"QA Changedreferrer"},referrerToken)).reverify,undefined);
+  account=await db.userById(referrer.id);assert(account);assert.equal(account.verifyStatus,"verified");
   const edited=await db.updateReferrer(referrer.id,{name:"QA Newidentity"},account,true);assert.equal(edited?.verifyStatus,"card_pending","a pending identity edit also clears an old register-match flag");
-  await db.markHpcsaMatched(referrer.id,{name:account.name,hpcsaNumber:account.hpcsaNumber||""});
+  assert.equal(await db.verifyMatchedReferrer(referrer.id,account),null);
   assert.equal((await db.userById(referrer.id))?.verifyStatus,"card_pending","a late lookup cannot flag a different identity");
   const pending=await db.userById(referrer.id);assert(pending);await db.approveReferrer(referrer.id);
   await assert.rejects(()=>db.updateReferrer(referrer.id,{name:"QA Staleedit"},pending,true),/REFERRER_PROFILE_CONFLICT/);

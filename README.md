@@ -75,14 +75,18 @@ For standalone hosting or a phone app, replace the preview-specific `__PORT_5000
 Referring clinicians (doctors, nurses and other professionals) get a lightweight
 account on the referral PWA, separate from receiving-staff accounts but in the
 same `users` table with the role `referrer`. On signup they supply their HPCSA
-registration number. The register is public, so a match against the
-`hpcsa_register` table (name + number, active status) only shows the person
-exists: the account is flagged "HPCSA register match" in the owner's
-verification queue and still needs the owner's approval. A miss, or no HPCSA
-number, puts the account in the same queue with a staff-card photo upload
-(encrypted at rest, same scheme as clinical images). Until approved, a referrer
-cannot send referrals or see the on-call roster. A verified referrer who changes
-their name or HPCSA number returns to the queue until the owner confirms it.
+registration number. A matching name and surname, normalized registration
+number and eligible status in the imported `hpcsa_register` automatically
+verify the account. No administrator approval or staff card is required for a
+match. Missing, mismatching or ineligible records use staff-card review instead
+(encrypted at rest, same scheme as clinical images). Until verified, a referrer
+cannot send referrals or see the on-call roster. Identity edits are rechecked
+and their result is saved atomically: a match stays verified, a miss enters
+review. Existing pending accounts are rechecked on sign-in and profile refresh.
+Explicitly rejected or disabled accounts are not reinstated automatically.
+The registration field accepts HPCSA and nursing practitioner numbers; automatic
+verification requires an actual matching record in the imported dataset. The
+HPCSA iRegister import does not include the separate SANC nursing register.
 Referrals carry the account's name, cellphone and email rather than whatever
 the form submitted.
 
