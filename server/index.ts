@@ -127,7 +127,9 @@ app.use((req, res, next) => {
       hpcsaBusy = false;
     }
   };
-  if (process.env.HPCSA_AUTO_REFRESH !== "0") {
+  // Opt-in: production runs register refreshes in transferdesk-hpcsa.service so
+  // a long sweep never competes with clinical requests in this process.
+  if (process.env.HPCSA_AUTO_REFRESH === "1") {
     const hpcsaTimer = setInterval(hpcsaRefresh, HPCSA_REFRESH_MS);
     hpcsaTimer.unref();
   }

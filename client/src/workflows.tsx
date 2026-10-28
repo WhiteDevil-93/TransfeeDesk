@@ -14,8 +14,8 @@ import { askNotify,notify } from "./alerts";
 export const messageOf=(e:any)=>{ try { return JSON.parse(String(e.message).replace(/^\d+:\s*/,"")).message; } catch { return "Request failed. Please try again."; } };
 export type UploadImage={name:string;mime:"image/jpeg";data:string};
 
-export function TeamSelect({value,onChange,all=false,id}: {value:string;onChange:(v:string)=>void;all?:boolean;id?:string}) {
-  return <Select value={value} onValueChange={onChange}><SelectTrigger id={id} data-testid="select-team"><SelectValue placeholder="Choose receiving unit" /></SelectTrigger>
+export function TeamSelect({value,onChange,all=false,id,disabled}: {value:string;onChange:(v:string)=>void;all?:boolean;id?:string;disabled?:boolean}) {
+  return <Select value={value} onValueChange={onChange} disabled={disabled}><SelectTrigger id={id} data-testid="select-team"><SelectValue placeholder="Choose receiving unit" /></SelectTrigger>
     <SelectContent>{all && <SelectItem value="all">All units</SelectItem>}{TEAMS.map(t=><SelectItem value={t} key={t}>{t} · {TEAM_NAMES[t]}</SelectItem>)}</SelectContent></Select>;
 }
 

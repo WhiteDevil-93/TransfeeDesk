@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import ws from "ws";
 import type { Referral, ReferralInput, Doctor, User, AuditRow, AppSettings, Followup } from "@shared/schema";
 import { type Team } from "@shared/teams";
+import { normalizeHpcsaNumber } from "./hpcsa-verification";
 
 if(!process.env.APP_DB_SECRET || process.env.APP_DB_SECRET.length<32) throw new Error("Server database secret is not configured");
 export const sb = createClient(process.env.SUPABASE_URL!, (process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY)!, { auth: { persistSession: false }, realtime: { transport: ws as any }, global: { headers: { "x-app-secret": process.env.APP_DB_SECRET || "" } } });
@@ -17,7 +18,13 @@ export const defaults: AppSettings = { p1: 5, p2: 30, p3: 120, repeat: 5, sound:
 
 /* ---------- passwords & sessions ---------- */
 export function hashPw(pw: string) { const salt = crypto.randomBytes(16); const h = crypto.scryptSync(pw, salt, 64, { N: 16384 }); return `scrypt$${salt.toString("hex")}$${h.toString("hex")}`; }
-export function verifyPw(pw: string, stored: string) { const [, s, h] = stored.split("$"); if (!s || !h) return false; const c = crypto.scryptSync(pw, Buffer.from(s, "hex"), 64, { N: 16384 }); return crypto.timingSafeEqual(c, Buffer.from(h, "hex")); }
+export function verifyPw(pw: string, stored: string) {
+  const [kind, s, h] = String(stored || "").split("$");
+  if (kind !== "scrypt" || !/^[0-9a-f]{32}$/.test(s || "") || !/^[0-9a-f]{128}$/.test(h || "")) return false;
+  const c = crypto.scryptSync(pw, Buffer.from(s, "hex"), 64, { N: 16384 });
+  return crypto.timingSafeEqual(c, Buffer.from(h, "hex"));
+}
+export const isUniqueViolation = (e: unknown) => /duplicate key value violates unique constraint/i.test(String((e as any)?.message || ""));
 const sha = (t: string) => crypto.createHash("sha256").update(t).digest("hex");
 const IDLE_MIN = 30, ABS_HOURS = 12;
 const userOut = (u: any): User => ({ id: u.id, username: u.username, name: u.name, role: u.role, team:u.team, phone:u.phone || "", active: u.active, mustChange: u.must_change, lastLogin: u.last_login,
@@ -57,7 +64,7 @@ export const db = {
     return userOut(chk(await sb.from("users").insert({
       username: b.username.toLowerCase().trim(), name: b.name, role: "referrer", team: null,
       email: b.email.trim().toLowerCase(), phone: b.phone, specialty: b.specialty,
-      profession: b.profession, hpcsa_number: b.hpcsa.replace(/\s+/g, ""),
+      profession: b.profession, hpcsa_number: normalizeHpcsaNumber(b.hpcsa),
       pass_hash: hashPw(b.password), must_change: false,
     }).select().single()));
   },
@@ -68,7 +75,7 @@ export const db = {
     if (b.phone !== undefined) n.phone = b.phone;
     if (b.specialty !== undefined) n.specialty = b.specialty;
     if (b.profession !== undefined) n.profession = b.profession;
-    if (b.hpcsa !== undefined) n.hpcsa_number = b.hpcsa.replace(/\s+/g, "");
+    if (b.hpcsa !== undefined) n.hpcsa_number = normalizeHpcsaNumber(b.hpcsa);
     if (Object.keys(n).length) chk(await sb.from("users").update(n).eq("id", id));
     return this.userById(id);
   },
@@ -94,7 +101,7 @@ export const db = {
     return Buffer.concat([d.update(Buffer.from(r.card_cipher, "base64")), d.final()]).toString("base64");
   },
   async hpcsaLookup(name: string, number: string) {
-    const n = number.replace(/\s+/g, "");
+    const n = normalizeHpcsaNumber(number);
     // Primary: exact match on the normalized number — uses the btree hpcsa_number_idx
     // (fast, index seek). `ilike` cannot use that index and times out once the
     // register is large, so the number path must stay an exact `eq`.
@@ -116,13 +123,17 @@ export const db = {
   async userById(id:number) { const r=chk(await sb.from("users").select("*").eq("id",id).maybeSingle()); return r ? userOut(r) : null; },
   async updateUser(id: number, u: Record<string, any>) { return chk(await sb.from("users").update(u).eq("id", id)); },
   async userCount() { const r = await sb.from("users").select("id", { count: "exact", head: true }); if (r.error) throw new Error(r.error.message); return r.count || 0; },
+  // Throws when either lookup fails: a failed check must not read as "no account".
   async userByIdentity(username: string, email: string) {
-    const byUser = await sb.from("users").select("*").eq("username", username.toLowerCase().trim()).maybeSingle();
-    if (byUser.data) return byUser.data as any;
-    const byEmail = email.trim()
-      ? await sb.from("users").select("*").eq("email", email.trim().toLowerCase()).maybeSingle()
-      : { data: null as any };
-    return (byUser.error ? null : byEmail.data) as any;
+    const byUser = chk(await sb.from("users").select("id").eq("username", username.toLowerCase().trim()).limit(1)) as any[];
+    if (byUser.length) return byUser[0];
+    if (!email.trim()) return null;
+    const byEmail = chk(await sb.from("users").select("id").eq("email", email.trim().toLowerCase()).limit(1)) as any[];
+    return byEmail[0] || null;
+  },
+  async emailTaken(email: string, exceptId: number) {
+    const rows = chk(await sb.from("users").select("id").eq("email", email.trim().toLowerCase()).neq("id", exceptId).limit(1)) as any[];
+    return rows.length > 0;
   },
   async createSession(userId: number) { const token = crypto.randomBytes(32).toString("base64url");
     chk(await sb.from("sessions").insert({ id: sha(token), user_id: userId, expires_at: new Date(Date.now() + ABS_HOURS * 3600e3).toISOString() })); return token; },
@@ -148,7 +159,7 @@ export const db = {
     return (chk(await q) as any[]).map(toCamel);
   },
   async get(id: number): Promise<Referral | undefined> { return publicReferral(chk(await sb.from("referrals").select("*").eq("id", id).maybeSingle())); },
-  async byRef(ref: string) { return toCamel(chk(await sb.from("referrals").select("ref,phone,status,priority,decided_at,created_at,bed_status").eq("ref", ref).maybeSingle())); },
+  async byRef(ref: string) { return toCamel(chk(await sb.from("referrals").select("ref,phone,status,priority,decided_at,created_at,bed_status,purged_at").eq("ref", ref).maybeSingle())); },
   async create(d: ReferralInput, referrerId: number | null = null): Promise<Referral> {
     const ref = "TX-" + crypto.randomBytes(8).toString("hex").toUpperCase();
     const code=crypto.randomBytes(16).toString("hex"); const {images,...input}=d;
@@ -164,10 +175,11 @@ export const db = {
     return r && !r.purged_at ? publicReferral(r) : null;
   },
   async resetPortal(id:number) { const code=crypto.randomBytes(16).toString("hex"); chk(await sb.from("referrals").update({portal_hash:sha(code)}).eq("id",id)); return code; },
-  async markOpened(id:number,name:string) {
-    const at=new Date().toISOString();
-    chk(await sb.from("referrals").update({opened_at:at,opened_by:name}).eq("id",id).is("opened_at",null));
-    chk(await sb.from("referrals").update({followup_seen_at:at}).eq("id",id));
+  // seenUpTo is the latest_followup_at the viewer is being shown, so a follow-up
+  // that arrives after the read stays flagged for the unit. It never moves back.
+  async markOpened(id:number,name:string,seenUpTo?:string|null) {
+    chk(await sb.from("referrals").update({opened_at:new Date().toISOString(),opened_by:name}).eq("id",id).is("opened_at",null));
+    if(seenUpTo) chk(await sb.from("referrals").update({followup_seen_at:seenUpTo}).eq("id",id).or(`followup_seen_at.is.null,followup_seen_at.lt.${JSON.stringify(seenUpTo)}`));
   },
   async timeline(id:number):Promise<Followup[]> {
     const rows:any[]=chk(await sb.from("referral_followups").select("id,created_at,author,kind,body").eq("referral_id",id).order("created_at",{ascending:true})) || [];

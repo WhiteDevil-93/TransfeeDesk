@@ -40,6 +40,9 @@
 import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
 import path from "node:path";
+import { normalizeHpcsaNumber } from "../server/hpcsa-verification";
+
+export const registerNumber = (registration: string) => registration.startsWith("NOREG_") ? "" : normalizeHpcsaNumber(registration);
 
 export const SEARCH_URL = "https://hpcsaonline.custhelp.com/cc/ReportController/getDataFromRnow";
 const DELAY_MS = 2000; // politeness between requests
@@ -48,7 +51,11 @@ const DELAY_MS = 2000; // politeness between requests
 // from the repo root (see npm scripts).
 export const CHECKLIST = process.env.HPCSA_CHECKLIST || path.resolve(process.cwd(), "script", "hpcsa_surnames.txt");
 // Resume state for --bulk sweeps: which letters have already been fetched.
-const BULK_STATE = process.env.HPCSA_BULK_STATE || path.resolve(process.cwd(), "script", "hpcsa_bulk_state.json");
+// The installed service can only write under /var/lib/transferdesk (systemd
+// ProtectSystem=strict), so prefer that directory when it exists.
+const BULK_STATE = process.env.HPCSA_BULK_STATE || (fs.existsSync("/var/lib/transferdesk")
+  ? "/var/lib/transferdesk/hpcsa_bulk_state.json"
+  : path.resolve(process.cwd(), "script", "hpcsa_bulk_state.json"));
 
 export interface Row {
   title: string;
@@ -139,7 +146,7 @@ function upsertBatch(sb: ReturnType<typeof makeClient>, rows: Row[], now: string
       surname: r.surname,
       full_name: r.full_name,
       registration_number: r.registration_number,
-      hpcsa_number: r.registration_number.startsWith("NOREG_") ? "" : r.registration_number,
+      hpcsa_number: registerNumber(r.registration_number),
       categories: r.categories,
       city: r.city,
       postal_code: r.postal_code,
@@ -165,7 +172,7 @@ async function upsertRows(rows: Row[]) {
           surname: r.surname,
           full_name: r.full_name,
           registration_number: r.registration_number,
-          hpcsa_number: r.registration_number.startsWith("NOREG_") ? "" : r.registration_number,
+          hpcsa_number: registerNumber(r.registration_number),
           categories: r.categories,
           city: r.city,
           postal_code: r.postal_code,

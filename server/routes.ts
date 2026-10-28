@@ -1,7 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import type { Server } from "node:http";
 import fs from "node:fs"; import path from "node:path";
-import { db, verifyPw } from "./db";
+import { db, verifyPw, isUniqueViolation } from "./db";
 import { geocode } from "./geocode";
 import { catchmentAt } from "./catchment";
 import { facilityLocation } from "../shared/location";
@@ -9,7 +9,7 @@ import { referralInput, decisionInput, followupInput, imageInput } from "@shared
 import { TEAMS, canAccess, canManage, type Team } from "@shared/teams";
 import { z } from "zod";
 import { appendChecklistSurnames, searchIRegister } from "../script/hpcsa-scrape";
-import { hpcsaIdentityMatches } from "./hpcsa-verification";
+import { hpcsaIdentityMatches, normalizeHpcsaNumber } from "./hpcsa-verification";
 
 // Surname that a new unverified referrer needs in the register. Added to the
 // checklist so the scheduled refresh covers it, AND fetched immediately (when
@@ -28,7 +28,7 @@ async function queueSurnameForRefresh(fullName: string) {
       const { sb } = await import("./db");
       for (const r of rows) {
         await sb.from("hpcsa_register").upsert(
-          { surname: r.surname, full_name: r.full_name, registration_number: r.registration_number, hpcsa_number: r.registration_number.startsWith("NOREG_") ? "" : r.registration_number.replace(/\s+/g, ""), categories: r.categories, city: r.city, postal_code: r.postal_code, status: r.status, scraped_at: new Date().toISOString() },
+          { surname: r.surname, full_name: r.full_name, registration_number: r.registration_number, hpcsa_number: r.registration_number.startsWith("NOREG_") ? "" : normalizeHpcsaNumber(r.registration_number), categories: r.categories, city: r.city, postal_code: r.postal_code, status: r.status, scraped_at: new Date().toISOString() },
           { onConflict: "registration_number" }
         );
       }
@@ -85,7 +85,7 @@ function rosterFor(date: string, spec?: string) {
   });
 }
 
-/* simple in-memory rate limiter */
+/* in-memory rate limiter: per process, reset on restart (see README "Safety and operations") */
 const hits = new Map<string, number[]>();
 function limit(key: string, max: number, windowMs: number) {
   const now = Date.now(); const a = (hits.get(key) || []).filter(t => now - t < windowMs); a.push(now); hits.set(key, a); return a.length > max;
@@ -187,7 +187,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const ref = String(req.body?.ref || "").toUpperCase().trim().slice(0, 30); const ph = String(req.body?.phone || "").replace(/\D/g, "").slice(-9);
     if (limit("stref:" + ref, 10, 3600e3)) return res.status(429).json({ message: "Too many requests" });
     const r: any = ref && ph.length === 9 ? await db.byRef(ref) : null;
-    if (!r || String(r.phone || "").replace(/\D/g, "").slice(-9) !== ph) return res.status(404).json({ message: "No referral matches that reference and number" });
+    if (!r || r.purgedAt || String(r.phone || "").replace(/\D/g, "").slice(-9) !== ph) return res.status(404).json({ message: "No referral matches that reference and number" });
     res.json({ ref: r.ref, status: r.status, priority: r.priority, bedStatus: r.bedStatus, updatedAt: r.decidedAt || r.createdAt });
   }));
   app.post("/api/portal",wrap(async(req,res)=>{
@@ -242,13 +242,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const existing = await db.userByIdentity(String(username), p.data.email);
     if (existing) return res.status(409).json({ message: "An account already exists for that username or email" });
     const d = p.data;
-    const hpcsa = d.hpcsa.replace(/\s+/g, "");
-    let verifyStatus = "none";
+    const hpcsa = normalizeHpcsaNumber(d.hpcsa);
+    // Every unverified account waits in the owner's queue; it stays there
+    // (without "Card on file") until a staff card is uploaded.
+    let verifyStatus = "card_pending";
     let autoApproved = false;
     try {
       if (hpcsa) {
         const hits = await db.hpcsaLookup(d.name, hpcsa);
-        const byNum = hits.rows.find(r => r.hpcsa_number.replace(/\s+/g, "").toLowerCase() === hpcsa.toLowerCase());
+        const byNum = hits.rows.find(r => normalizeHpcsaNumber(r.hpcsa_number) === hpcsa);
         if (byNum) {
           const status = String(byNum.status).toUpperCase();
           const identityMatches = hpcsaIdentityMatches(d.name, hpcsa, byNum);
@@ -269,7 +271,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       verifyStatus = "card_pending";
       try { await audit(req, "hpcsa_check", null, `lookup error: ${e?.message}`); } catch { /* ignore */ }
     }
-    const u = await db.addReferrer({ ...d, username: String(username), password: String(password), hpcsa });
+    let u;
+    try { u = await db.addReferrer({ ...d, username: String(username), password: String(password), hpcsa }); }
+    catch (e) { if (isUniqueViolation(e)) return res.status(409).json({ message: "An account already exists for that username or email" }); throw e; }
     await db.updateUser(u.id, { verify_status: verifyStatus, verified_at: verifyStatus === "verified" ? new Date().toISOString() : null });
     await db.audit({ action: "referrer_signup", detail: `${u.username}${autoApproved ? " (HPCSA auto-verified)" : ""}`, ip: ipOf(req) });
     res.json({
@@ -283,11 +287,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/referrer/profile", REF, isReferrer, wrap(async (req, res) => {
     const p = referrerProfile.partial().safeParse(req.body || {});
     if (!p.success) return res.status(400).json({ message: "Invalid profile fields" });
-    const u = await db.updateReferrer(req.user.id, p.data);
-    if (p.data.hpcsa !== undefined && p.data.hpcsa.replace(/\s+/g, "") && u?.verifyStatus !== "verified") {
-      const hits = await db.hpcsaLookup(req.user.name, p.data.hpcsa!);
-      const h = p.data.hpcsa.replace(/\s+/g, "").toLowerCase();
-      const match = hits.rows.find(r => hpcsaIdentityMatches(req.user.name, h, r));
+    const emailTaken = () => res.status(409).json({ message: "Another account already uses that email address" });
+    if (p.data.email !== undefined && await db.emailTaken(p.data.email, req.user.id)) return emailTaken();
+    let u;
+    try { u = await db.updateReferrer(req.user.id, p.data); }
+    catch (e) { if (isUniqueViolation(e)) return emailTaken(); throw e; }
+    if (p.data.hpcsa !== undefined && normalizeHpcsaNumber(p.data.hpcsa) && u?.verifyStatus !== "verified") {
+      const hits = await db.hpcsaLookup(req.user.name, p.data.hpcsa);
+      const match = hits.rows.find(r => hpcsaIdentityMatches(req.user.name, p.data.hpcsa!, r));
       if (match) await db.approveReferrer(req.user.id, req.user.name);
       else queueSurnameForRefresh(req.user.name);
     }
@@ -297,6 +304,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/referrer/card", REF, isReferrer, wrap(async (req, res) => {
     const img = imageInput.safeParse(req.body?.image);
     if (!img.success) return res.status(400).json({ message: "Please upload a JPEG, PNG or WebP photo under 2 MB" });
+    if (req.user.verifyStatus === "verified") return res.status(409).json({ message: "Your account is already verified. No staff card is needed." });
     await db.attachCard(req.user.id, img.data);
     await db.audit({ userId: req.user.id, userName: req.user.name, action: "referrer_card_uploaded", ip: ipOf(req) });
     res.json({ ok: true, message: "Staff card received — the owner will verify it shortly." });
@@ -370,7 +378,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/referrals", A, wrap(async (req, res) => { if (req.user.role === "referrer") return res.status(403).json({ message: "Use My consults in the referrer portal" }); maybePurge(); res.json(await db.list(scope(req))); }));
   app.get("/api/referrals/:id", A, wrap(async (req, res) => {
     const r=await findCase(req,res); if(!r) return;
-    await db.markOpened(r.id,req.user.name);
+    await db.markOpened(r.id,req.user.name,r.latestFollowupAt);
     await audit(req, "view_referral", r.id, r.ref);
     res.json({...await db.get(r.id),timeline:await db.timeline(r.id),images:(await db.images(r.id)).filter(im=>!im.followupId)});
   }));
