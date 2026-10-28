@@ -1,11 +1,20 @@
+-- Replace REPLACE_WITH_OWNER_USERNAME with the owner's username before applying
+-- (script/setup-local-db.sh does this). Every other global admin is demoted below,
+-- so the file refuses to run with the placeholder still in place.
+do $$ begin
+  if 'REPLACE_WITH_OWNER_USERNAME' like 'REPLACE\_WITH\_%' then
+    raise exception 'Set the owner username in unit_workflows.sql before applying it';
+  end if;
+end $$;
 alter table users drop constraint if exists users_role_check;
-alter table users add constraint users_role_check check(role in ('admin','unit_admin','clinician'));
+-- 'referrer' is included so re-running this file after migration_referrers.sql keeps existing referrer rows valid.
+alter table users add constraint users_role_check check(role in ('admin','unit_admin','clinician','referrer'));
 alter table users add column if not exists team text check(team in ('MEU','TEU','SEU'));
 alter table users add column if not exists phone text not null default '';
 -- The owner is the sole global administrator. Existing other admins become
 -- unit consultants and must be assigned a unit by the owner.
-delete from sessions where user_id in (select id from users where role='admin' and username<>'thendricks');
-update users set role='unit_admin' where role='admin' and username<>'thendricks';
+delete from sessions where user_id in (select id from users where role='admin' and username<>'REPLACE_WITH_OWNER_USERNAME');
+update users set role='unit_admin' where role='admin' and username<>'REPLACE_WITH_OWNER_USERNAME';
 -- Existing cases deliberately remain unassigned; only the global admin can see them.
 alter table referrals add column if not exists team text check(team in ('MEU','TEU','SEU'));
 alter table referrals add column if not exists consult_type text not null default 'transfer' check(consult_type in ('transfer','advice'));
@@ -34,6 +43,9 @@ create table if not exists unit_rosters (
 alter table referral_followups enable row level security;
 alter table referral_images enable row level security;
 alter table unit_rosters enable row level security;
+drop policy if exists app_followups on referral_followups;
+drop policy if exists app_images on referral_images;
+drop policy if exists app_unit_rosters on unit_rosters;
 create policy app_followups on referral_followups for all to anon using(public.is_app_server()) with check(public.is_app_server());
 create policy app_images on referral_images for all to anon using(public.is_app_server()) with check(public.is_app_server());
 create policy app_unit_rosters on unit_rosters for all to anon using(public.is_app_server()) with check(public.is_app_server());

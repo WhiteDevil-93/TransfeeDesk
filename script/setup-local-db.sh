@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-shot local Supabase database setup for TransferDesk development.
-# Applies the three schema migrations in order, adds the loc_source column the
-# app code expects, and seeds the global-admin owner account.
+# Applies every schema migration in order and seeds the global-admin owner
+# account (OWNER_USERNAME, default "thendricks").
 #
 # Prereqs: `supabase start` already run (stack on 127.0.0.1:54322), APP_DB_SECRET
 # exported in the environment (>= 32 chars, must match what the app server uses).
@@ -17,24 +17,27 @@ if [ -z "${APP_DB_SECRET:-}" ] || [ "${#APP_DB_SECRET}" -lt 32 ]; then
 fi
 SHA="$(printf '%s' "$APP_DB_SECRET" | sha256sum | awk '{print $1}')"
 echo "APP_DB_SECRET sha256: $SHA"
+OWNER_USERNAME="${OWNER_USERNAME:-thendricks}"
+[[ "$OWNER_USERNAME" =~ ^[a-z0-9._-]{3,30}$ ]] || { echo "ERROR: OWNER_USERNAME must be 3-30 lowercase letters, digits, dot, dash or underscore" >&2; exit 1; }
 
 echo "== migration.sql (base schema) =="
 $PSQL < supabase/migration.sql
-
-# The app reads/writes a loc_source column on referrals that the original
-# migration does not create. Add it here so the schema matches the code.
-echo "== add missing loc_source column =="
-$PSQL -c "alter table referrals add column if not exists loc_source text;"
 
 echo "== migration_lockdown.sql (x-app-secret RLS) =="
 sed "s/REPLACE_WITH_SHA256_OF_APP_DB_SECRET/$SHA/g" supabase/migration_lockdown.sql | $PSQL
 
 echo "== unit_workflows.sql (teams, followups, rosters, RPCs) =="
-$PSQL < supabase/unit_workflows.sql
+sed "s/REPLACE_WITH_OWNER_USERNAME/$OWNER_USERNAME/g" supabase/unit_workflows.sql | $PSQL
 
 echo "== migration_hpcsa.sql (HPCSA iRegister table) =="
 # Must run after the lockdown migration: it references public.is_app_server().
 $PSQL < supabase/migration_hpcsa.sql
+
+echo "== migration_referrers.sql (referrer role and verification state) =="
+$PSQL < supabase/migration_referrers.sql
+
+echo "== migration_hardening.sql (loc_source, profile fields, retention) =="
+$PSQL < supabase/migration_hardening.sql
 
 echo "== seed owner (global admin) =="
 # scrypt hash of the owner password, same algorithm as server/db.ts.
@@ -47,7 +50,7 @@ console.log("scrypt\$"+s.toString("hex")+"\$"+h.toString("hex"));
 
 $PSQL <<SQL
 insert into users (username, name, role, pass_hash, active, must_change)
-values ('thendricks', 'Owner', 'admin', '$HASH', true, false)
+values ('$OWNER_USERNAME', 'Owner', 'admin', '$HASH', true, false)
 on conflict (username) do update set pass_hash = excluded.pass_hash, active = true, must_change = false;
 SQL
 
