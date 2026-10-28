@@ -5,8 +5,9 @@ Target: Ubuntu ARM64 at `84.12.115.40`. Public origin:
 redirects browser pages to BaraBridge while retaining its existing API and PWA
 asset routes for older clients.
 
-The existing Supabase project remains authoritative. No schema, account, key,
-or image-encryption policy is changed by deployment.
+The existing Supabase project remains authoritative. Keep `APP_DB_SECRET`
+unchanged. Apply the documented migrations before activating server code that
+depends on them; introduce `APP_DATA_KEY` only after its recovery copy is verified.
 
 ## Gates and recovery
 
@@ -35,8 +36,10 @@ Preservation --------- separate services; existing workloads intact+
 5. Stop and disable the temporary setup service after handoff. Remove its token
    environment file. Never record the token or secret in Git, logs, or job cards.
 
-6. Apply `supabase/migration_profile_retention.sql` to the existing database
-   (additive and re-runnable). Then generate `APP_DATA_KEY` (for example `openssl rand -hex 32`),
+6. Before activating this version, apply the README's missing migrations in
+   order: `migration_integrity.sql`, `migration_chat_push.sql`, then
+   `migration_profile_retention.sql` (additive and re-runnable). Generate
+   `APP_DATA_KEY` (for example `openssl rand -hex 32`),
    store it in the secrets manager first, append it to
    `/var/lib/transferdesk/runtime.env` as `APP_DATA_KEY="..."`, restart
    `transferdesk.service`, and run `node dist/reencrypt-data.cjs --dry-run`, then
@@ -44,9 +47,12 @@ Preservation --------- separate services; existing workloads intact+
    `APP_DB_SECRET`-derived key. Until then the server logs a warning and keeps
    using the legacy key.
 
-If credential checks fail, leave the clinical service unavailable; do not rotate
-the secret or weaken RLS. If a release fails, point `current` at the preceding
-release and restart only TransferDesk. Restore the saved Caddy configuration if
+If credential checks fail, preserve the working deployment; do not rotate
+the database secret or weaken RLS. If a release fails, use a tested compatible
+release and restart only TransferDesk. Once any `v2:` image/card has been written,
+keep `APP_DATA_KEY` and do not roll back to a legacy-only server: it cannot read
+those records. A pre-v2 rollback also requires restoring a matching protected
+pre-migration data backup. Restore the saved Caddy configuration if
 the proxy change fails. Never stop/restart unrelated renderer or bot services.
 
 `data.js` is imported from the private CHBAH-call-roster repository into the

@@ -115,7 +115,7 @@ export const db = {
       pass_hash: await hashPw(b.password), must_change: false,
     }).select().single()));
   },
-  async updateReferrer(id: number, b: { name?: string; email?: string; phone?: string; hospital?: string; department?: string; specialty?: string; profession?: string; hpcsa?: string }) {
+  async updateReferrer(id: number, b: { name?: string; email?: string; phone?: string; hospital?: string; department?: string; specialty?: string; profession?: string; hpcsa?: string }, before: Pick<User, "name" | "hpcsaNumber" | "verifyStatus">, identityChanged = false) {
     const n: any = {};
     if (b.name !== undefined) n.name = b.name;
     if (b.email !== undefined) n.email = b.email.trim().toLowerCase();
@@ -125,8 +125,15 @@ export const db = {
     if (b.specialty !== undefined) n.specialty = b.specialty;
     if (b.profession !== undefined) n.profession = b.profession;
     if (b.hpcsa !== undefined) n.hpcsa_number = normalizeHpcsaNumber(b.hpcsa);
-    if (Object.keys(n).length) chk(await sb.from("users").update(n).eq("id", id));
-    return this.userById(id);
+    if (!Object.keys(n).length) return this.userById(id);
+    // Revoke approval in the SAME write as the identity edit. Compare the
+    // authenticated snapshot so a concurrent approval/edit cannot be overwritten.
+    if (identityChanged) Object.assign(n, { verify_status: "card_pending", verified_at: null });
+    const row = chk(await sb.from("users").update(n).eq("id", id).eq("role", "referrer")
+      .eq("name", before.name).eq("hpcsa_number", before.hpcsaNumber || "").eq("verify_status", before.verifyStatus)
+      .select("*").maybeSingle());
+    if (!row) throw new Error("REFERRER_PROFILE_CONFLICT");
+    return userOut(row);
   },
   async attachCard(id: number, img: { name: string; mime: string; data: string }) {
     const e = encryptCard(img);
@@ -138,8 +145,9 @@ export const db = {
     const rows = (chk(await sb.from("users").select("*").eq("role", "referrer").in("verify_status", ["card_pending", "hpcsa"]).order("name")) as any[]);
     return rows.map((u) => ({ id: u.id, username: u.username, name: u.name, email: u.email || "", phone: u.phone || "", hospital: u.hospital || "", hpcsa: u.hpcsa_number || "", hpcsaMatched: u.verify_status === "hpcsa", profession: u.profession || "", hasCard: !!u.card_cipher, createdAt: u.created_at }));
   },
-  async markHpcsaMatched(id: number) {
-    chk(await sb.from("users").update({ verify_status: "hpcsa" }).eq("id", id).eq("role", "referrer").neq("verify_status", "verified"));
+  async markHpcsaMatched(id: number, identity: { name: string; hpcsaNumber: string }) {
+    chk(await sb.from("users").update({ verify_status: "hpcsa" }).eq("id", id).eq("role", "referrer")
+      .eq("name", identity.name).eq("hpcsa_number", identity.hpcsaNumber).neq("verify_status", "verified"));
   },
   async approveReferrer(id: number) {
     return (chk(await sb.from("users").update({ verify_status: "verified", verified_at: new Date().toISOString() }).eq("id", id).eq("role", "referrer").select("id")) as any[]).length > 0;

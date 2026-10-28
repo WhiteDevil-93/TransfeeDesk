@@ -2,13 +2,17 @@ import "dotenv/config";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import ws from "ws";
 import { createClient } from "@supabase/supabase-js";
-import { db } from "../server/db";
+import { db, sb as appDatabase, sealBytes, openBytes, dataKeys } from "../server/db";
 const B=process.env.TEST_BASE||"http://127.0.0.1:5000";
+assert.equal(process.env.INTEGRATION_DB_ISOLATED,"1","Set INTEGRATION_DB_ISOLATED=1 only for a dedicated disposable test database");
+assert.notEqual(new URL(process.env.SUPABASE_URL!).hostname,"vfvwisaqdvigjdngmlyo.supabase.co","Integration tests refuse the live BaraBridge database");
 const sb=createClient(process.env.SUPABASE_URL!,process.env.SUPABASE_ANON_KEY!,{auth:{persistSession:false},realtime:{transport:ws as any},global:{headers:{"x-app-secret":process.env.APP_DB_SECRET!}}});
 const createdUsers:number[]=[],createdCases:number[]=[],claimed:string[]=[];
 const run=crypto.randomBytes(4).toString("hex"),password=crypto.randomBytes(20).toString("hex");
+const registerSource="qa-integration-"+run;
 const creds:any={};
 async function api(method:string,path:string,body?:any,token?:string,expected=200){
   const r=await fetch(B+path,{method,headers:{"content-type":"application/json",...(token?{authorization:"Bearer "+token}:{})},body:body?JSON.stringify(body):undefined});
@@ -21,6 +25,7 @@ async function login(username:string){
   return r.token;
 }
 async function cleanup(){
+  await sb.from("hpcsa_register").delete().eq("source",registerSource);
   for(const id of createdCases) await sb.from("referrals").delete().eq("id",id);
   for(const id of createdUsers) {await sb.from("sessions").delete().eq("user_id",id);await sb.from("users").delete().eq("id",id);}
 }
@@ -32,6 +37,26 @@ try {
   createdUsers.push(referrer.id);
   await db.approveReferrer(referrer.id);
   const referrerToken=await api("POST","/api/login",{username:referrer.username,password}).then(r=>r.token);
+  const profile=await api("GET","/api/referrer/profile",undefined,referrerToken);
+  assert.equal(profile.profile.hospital,"QA Facility");assert.equal(profile.profile.department,"ED");
+  const register=await sb.from("hpcsa_register").insert({surname:"Referrer",full_name:"QA Referrer",registration_number:"QA-"+run,hpcsa_number:"MP0999999",status:"ACTIVE",source:registerSource});
+  assert.ifError(register.error);
+  const changed=await api("POST","/api/referrer/profile",{hpcsa:"MP0999999"},referrerToken);assert.equal(changed.reverify,true);
+  let account=await db.userById(referrer.id);assert.equal(account?.verifyStatus,"hpcsa","a register match never re-approves a changed identity");
+  assert((await api("GET","/api/pending-referrers",undefined,rootToken)).some((u:any)=>u.id===referrer.id&&u.hpcsaMatched));
+  await api("GET","/api/referrer/roster",undefined,referrerToken,403);
+  await db.approveReferrer(referrer.id);
+  assert.deepEqual(await api("POST","/api/referrer/profile",{hpcsa:"mp 0999999",phone:"0710000000"},referrerToken),{ok:true});
+  assert.equal((await db.userById(referrer.id))?.verifyStatus,"verified","formatting/contact-only edits preserve approval");
+  assert.ifError((await sb.from("hpcsa_register").update({full_name:"QA Changedreferrer"}).eq("source",registerSource)).error);
+  assert.equal((await api("POST","/api/referrer/profile",{name:"QA Changedreferrer"},referrerToken)).reverify,true);
+  account=await db.userById(referrer.id);assert(account);assert.equal(account.verifyStatus,"hpcsa");
+  const edited=await db.updateReferrer(referrer.id,{name:"QA Newidentity"},account,true);assert.equal(edited?.verifyStatus,"card_pending","a pending identity edit also clears an old register-match flag");
+  await db.markHpcsaMatched(referrer.id,{name:account.name,hpcsaNumber:account.hpcsaNumber||""});
+  assert.equal((await db.userById(referrer.id))?.verifyStatus,"card_pending","a late lookup cannot flag a different identity");
+  const pending=await db.userById(referrer.id);assert(pending);await db.approveReferrer(referrer.id);
+  await assert.rejects(()=>db.updateReferrer(referrer.id,{name:"QA Staleedit"},pending,true),/REFERRER_PROFILE_CONFLICT/);
+  account=await db.userById(referrer.id);assert.equal(account?.name,"QA Newidentity");assert.equal(account?.verifyStatus,"verified","a stale profile edit cannot change a newly approved identity");
   for(const team of ["MEU","TEU","SEU"]){
     creds[team]={};
     for(const role of ["unit_admin","clinician"]){
@@ -149,6 +174,20 @@ try {
   assert((await db.pushDue(...window())).questions.some((x:any)=>x.id===freshId));
   await api("PATCH",`/api/referrals/${freshId}`,{status:"waiting",remindAt:new Date(Date.now()-60e3).toISOString()},member.token);
   assert((await db.pushDue(...window())).waiting.some((x:any)=>x.id===freshId&&x.remindAt));
+  // Exercise the deployed re-encryption executable against real PostgREST/RLS,
+  // in addition to the mocked unit test. Only synthetic records in this test DB.
+  const bytes=Buffer.from(image.data,"base64");
+  const legacyImage=sealBytes(bytes,{legacy:dataKeys.image.legacy,current:null}),legacyCard=sealBytes(bytes,{legacy:dataKeys.card.legacy,current:null});
+  const inserted=await appDatabase.from("referral_images").insert({referral_id:freshId,name:"qa-legacy.png",mime:"image/png",...legacyImage}).select("id").single();assert.ifError(inserted.error);assert(inserted.data);
+  assert.ifError((await appDatabase.from("users").update({card_cipher:legacyCard.cipher,card_iv:legacyCard.iv,card_tag:legacyCard.tag}).eq("id",referrer.id)).error);
+  const reencrypt=(dry:boolean)=>{const result=spawnSync(process.execPath,["dist/reencrypt-data.cjs",...(dry?["--dry-run"]:[])],{encoding:"utf8",timeout:30000,windowsHide:true});assert.equal(result.status,0,result.stderr);return result.stdout;};
+  assert.match(reencrypt(true),/Would re-encrypt 1 image\(s\) and 1 staff card\(s\)/);
+  const unchanged=await appDatabase.from("referral_images").select("iv").eq("id",inserted.data.id).single();assert.ifError(unchanged.error);assert.equal(unchanged.data?.iv,legacyImage.iv,"dry-run performs no write");
+  assert.match(reencrypt(false),/Re-encrypted 1 image\(s\) and 1 staff card\(s\)/);
+  const movedImage=await appDatabase.from("referral_images").select("cipher,iv,tag").eq("id",inserted.data.id).single();assert.ifError(movedImage.error);assert(movedImage.data?.iv.startsWith("v2:"));assert.deepEqual(openBytes(movedImage.data,dataKeys.image),bytes);
+  const movedCard=await appDatabase.from("users").select("card_cipher,card_iv,card_tag").eq("id",referrer.id).single();assert.ifError(movedCard.error);assert(movedCard.data?.card_iv.startsWith("v2:"));assert.deepEqual(Buffer.from(await db.referrerCard(referrer.id),"base64"),bytes);
+  assert.match(reencrypt(true),/Would re-encrypt 0 image\(s\) and 0 staff card\(s\)/);
+  console.log("PASS: atomic profile verification, concurrent approval guards, late-register-result guard, and packaged re-encryption dry-run/round-trip/idempotency against the isolated database.");
   console.log("PASS: unit isolation across all three units; image and portal authorization; advice, attribution, follow-ups; consultant privilege boundaries; rosters; deactivation; global routing.");
   if(process.env.KEEP_QA) fs.writeFileSync("/tmp/unit-qa.json",JSON.stringify({creds,createdUsers,createdCases}));
 } finally {

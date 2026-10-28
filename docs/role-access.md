@@ -55,3 +55,12 @@ without foreign staff/global tabs/role-grant controls. Browser fixtures write no
 Supabase records. Production verification uses a short-lived admin test session
 to open the form and workspace without submitting or editing clinical records;
 the test session is deleted afterward.
+
+## Atomic referrer identity edits
+
+An identity edit clears verification in the same database update as the changed
+name or HPCSA number. The write compares the authenticated name, number and
+verification state; a concurrent edit or approval returns 409 and asks the
+referrer to reload. A late register lookup can flag only the identity it checked.
+Changing a pending identity also clears an old register-match flag. Public
+register matches still require an administrator to approve the account.

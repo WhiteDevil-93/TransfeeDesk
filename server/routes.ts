@@ -382,25 +382,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const emailTaken = () => res.status(409).json({ message: "Another account already uses that email address" });
     if (p.data.email !== undefined && await db.emailTaken(p.data.email, req.user.id)) return emailTaken();
     const before = req.user;
-    let u;
-    try { u = await db.updateReferrer(req.user.id, p.data); }
-    catch (e) { if (isUniqueViolation(e)) return emailTaken(); throw e; }
-    const name = u?.name ?? before.name, number = normalizeHpcsaNumber(u?.hpcsaNumber ?? "");
     const sameName = (a: string, b: string) => a.trim().replace(/\s+/g, " ").toLowerCase() === b.trim().replace(/\s+/g, " ").toLowerCase();
     const identityChanged = (p.data.name !== undefined && !sameName(p.data.name, before.name)) ||
       (p.data.hpcsa !== undefined && normalizeHpcsaNumber(p.data.hpcsa) !== normalizeHpcsaNumber(before.hpcsaNumber || ""));
-    let reverify = false;
+    let u;
+    try { u = await db.updateReferrer(req.user.id, p.data, before, identityChanged); }
+    catch (e) {
+      if (isUniqueViolation(e)) return emailTaken();
+      if ((e as Error)?.message === "REFERRER_PROFILE_CONFLICT") return res.status(409).json({ message: "Your profile or verification changed. Reload your profile and try again." });
+      throw e;
+    }
+    const name = u?.name ?? before.name, number = normalizeHpcsaNumber(u?.hpcsaNumber ?? "");
+    const reverify = identityChanged && before.verifyStatus === "verified";
     if (identityChanged) {
       // Verification belongs to the identity that was checked, and the public
       // register cannot prove a new one belongs to this person, so any change
       // goes back to the administrator; a register match is only flagged.
-      if (before.verifyStatus === "verified") { await db.demoteReferrer(req.user.id); reverify = true; }
       let match = false;
       if (number) {
         try { const hits = await db.hpcsaLookup(name, number); match = hits.rows.some(r => hpcsaIdentityMatches(name, number, r)); }
         catch (e: any) { await audit(req, "hpcsa_check", null, `lookup error: ${e?.message}`); }
       }
-      if (match) await db.markHpcsaMatched(req.user.id);
+      if (match) await db.markHpcsaMatched(req.user.id, { name, hpcsaNumber: number });
       else queueSurnameForRefresh(name);
     }
     await db.audit({ userId: req.user.id, userName: req.user.name, action: reverify ? "referrer_reverify_required" : "referrer_profile_updated", ip: ipOf(req) });

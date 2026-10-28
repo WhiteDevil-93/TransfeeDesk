@@ -36,7 +36,7 @@ test("malformed stored password hashes fail closed instead of throwing", async (
 });
 
 test("login with a corrupted hash is a normal failed attempt, not a server error", async t => {
-  const updates: any[] = [];
+  const updates: any[] = [], identityEdits: boolean[] = [];
   t.mock.method(db, "userByName", async () => ({ id: 5, active: true, failed: 0, pass_hash: "scrypt$zz$truncated" }) as any);
   t.mock.method(db, "updateUser", async (_id: number, patch: any) => { updates.push(patch); return [] as any; });
   t.mock.method(db, "audit", async () => {});
@@ -87,6 +87,9 @@ test("referrer profile email changes cannot take another account's address", asy
     assert.equal(update.mock.callCount(), 0);
     update.mock.mockImplementation(async () => { throw new Error('duplicate key value violates unique constraint "users_email_unique"'); });
     assert.equal((await post(`${base}/api/referrer/profile`, { email: "raced@example.invalid" }, "t")).status, 409, "a concurrent claim is caught by the unique index");
+    update.mock.mockImplementation(async () => { throw new Error("REFERRER_PROFILE_CONFLICT"); });
+    const stale = await post(`${base}/api/referrer/profile`, { phone: "0711111111" }, "t");
+    assert.equal(stale.status,409);assert.match((await stale.json()).message,/Reload/);
   });
 });
 
@@ -95,8 +98,8 @@ test("a verified referrer who changes name or HPCSA number goes back to the admi
   t.mock.method(db, "sessionUser", async () => ({ id: 3, role: "referrer", ...stored, verifyStatus: "verified", mustChange: false }) as any);
   t.mock.method(db, "audit", async () => {});
   t.mock.method(db, "emailTaken", async () => false);
-  const updates: any[] = [];
-  t.mock.method(db, "updateReferrer", async (_id: number, b: any) => (updates.push(b), { id: 3, name: b.name ?? stored.name, hpcsaNumber: b.hpcsa !== undefined ? normalizeHpcsaNumber(b.hpcsa) : stored.hpcsaNumber, verifyStatus: "verified" }) as any);
+  const updates: any[] = [], identityEdits: boolean[] = [];
+  t.mock.method(db, "updateReferrer", async (_id: number, b: any, _before: any, changed: boolean) => (identityEdits.push(changed), updates.push(b), { id: 3, name: b.name ?? stored.name, hpcsaNumber: b.hpcsa !== undefined ? normalizeHpcsaNumber(b.hpcsa) : stored.hpcsaNumber, verifyStatus: "verified" }) as any);
   let registered: any[] = [];
   const lookup = t.mock.method(db, "hpcsaLookup", async () => ({ rows: registered }) as any);
   const demote = t.mock.method(db, "demoteReferrer", async () => {});
@@ -113,18 +116,18 @@ test("a verified referrer who changes name or HPCSA number goes back to the admi
     registered = [];
     const renamed = await update(base, { name: "Jane Brown" });
     assert.equal(renamed.reverify, true);
-    assert.equal(demote.mock.callCount(), 1, "an unconfirmed new name returns the account to the verification queue");
+    assert.equal(identityEdits.at(-1), true, "the identity write must revoke verification atomically");
 
     assert.equal(marked.mock.callCount(), 0);
 
     registered = [entry("BROWN JANE", "MP 0123456")];
     assert.equal((await update(base, { name: "Jane Brown" })).reverify, true, "the public register cannot prove the new identity is this person");
-    assert.equal(demote.mock.callCount(), 2);
+    assert.equal(identityEdits.at(-1), true);
     assert.equal(marked.mock.callCount(), 1, "a register match is flagged for the administrator");
 
     registered = [entry("SMITH JANE", "MP0123456", "REMOVED")];
     assert.equal((await update(base, { hpcsa: "MP 0999999" })).reverify, true);
-    assert.equal(demote.mock.callCount(), 3, "a number that is not on the register is not trusted");
+    assert.equal(identityEdits.at(-1), true, "a number that is not on the register is not trusted");
     assert.equal(marked.mock.callCount(), 1);
   });
 });

@@ -94,13 +94,13 @@ test("changing a password ends the account's other sessions", async t => {
 });
 
 test("referrer verification: register matches need an admin, identity changes are re-checked, cards are validated", async t => {
-  const added: any[] = [], marked: number[] = [];
+  const added: any[] = [], marked: number[] = [], identityEdits: boolean[] = [];
   t.mock.method(db, "sessionUser", async (token: string) => people.find(u => String(u.id) === token) || null);
   t.mock.method(db, "audit", async () => {});
   t.mock.method(db, "userByIdentity", async () => null);
   t.mock.method(db, "hpcsaLookup", async () => ({ number: "MP0123456", name: "", rows: [{ full_name: "Jane Smith", hpcsa_number: "MP0123456", status: "ACTIVE" }] }));
   t.mock.method(db, "addReferrer", async (b: any) => { added.push(b); return { id: 30, username: b.username } as any; });
-  t.mock.method(db, "updateReferrer", async () => people[4]);
+  t.mock.method(db, "updateReferrer", async (_id, _b, _before, changed) => { identityEdits.push(changed); return people[4]; });
   t.mock.method(db, "markHpcsaMatched", async (id: number) => { marked.push(id); });
   const demoted: number[] = [];
   t.mock.method(db, "demoteReferrer", async (id: number) => { demoted.push(id); });
@@ -119,7 +119,7 @@ test("referrer verification: register matches need an admin, identity changes ar
     assert.equal((await (await request("7", "/api/referrer/profile", "POST", { hpcsa: "mp 0123456", phone: "0720000000" })).json()).reverify, undefined, "same number, reformatted, is not a change");
     assert.deepEqual(demoted, []);
     assert.equal((await (await request("7", "/api/referrer/profile", "POST", { hpcsa: "MP9999999" })).json()).reverify, true, "a verified referrer who changes number is re-verified by an admin");
-    assert.deepEqual(demoted, [7]);
+    assert.equal(identityEdits.at(-1), true, "profile mutation itself revokes verification"); assert.deepEqual(demoted, []);
     const png = { name: "card.png", mime: "image/png", data: Buffer.from("not really a png").toString("base64") };
     assert.equal((await request("7", "/api/referrer/card", "POST", { image: png })).status, 409, "verified accounts are not downgraded by a card upload");
     const bad = await request("8", "/api/referrer/card", "POST", { image: png });

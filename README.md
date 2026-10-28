@@ -39,10 +39,10 @@ npm start
 The default port is 5000. The build output is `dist/index.cjs` (server) and `dist/public/` (web frontend). The integration tests require a dedicated test database and running API:
 
 ```sh
-TEST_BASE=http://127.0.0.1:5000 npx tsx tests/integration.ts
+INTEGRATION_DB_ISOLATED=1 TEST_BASE=http://127.0.0.1:5000 npx tsx tests/integration.ts
 ```
 
-Do not run integration tests against the live hospital database: they create temporary users, referrals and audit events.
+Do not run integration tests against the live hospital database: they create temporary users, referrals and audit events. The script refuses the known live project and requires explicit acknowledgement of a disposable database. Build first: integration also exercises `dist/reencrypt-data.cjs` with synthetic legacy image/card data, verifies plaintext preservation, then confirms a repeat dry-run finds nothing to migrate. Configure an independent test `APP_DATA_KEY` for that check.
 
 ## Private configuration
 
