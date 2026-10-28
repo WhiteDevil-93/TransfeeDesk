@@ -115,6 +115,8 @@ Technical access controls do not establish POPIA compliance. Production still ne
 
 Rate limits for sign-in, sign-up, status lookup, the follow-up portal and submissions are held in the API process's memory. They assume one API process on one host: a restart resets them and each additional process multiplies the allowance. Add proxy-level or shared-store limits before running more than one instance. Account lockout after five failed sign-ins is stored in the database and is not affected.
 
+Sign-in tokens for every role are kept in the browser's session storage, so closing the tab or app signs the user out (referrers who used an older version are signed out once). The follow-up page exchanges the private code for a signed 30-minute token (12-hour maximum) and uses that for refreshes, updates and image reads; resetting the code or purging the referral ends it. Older clients that still send the code with each request continue to work. The on-call roster, which lists staff phone numbers, is served only to verified referrers and the global administrator. WhatsApp drafts to referring doctors carry the reference only.
+
 Audit-log writes that fail are retried and held in a bounded in-memory queue (500 entries, lost if the process restarts). `/api/health` reports `audit.state` as `degraded`, with the queued and dropped counts, whenever that backlog is not empty or an entry has ever been dropped; alert on it. Case reads and changes are not blocked while the audit log is unavailable.
 
 Only the dependency versions locked in this archive were checked during export. Dependencies, policies and clinical workflows require ongoing review.
