@@ -370,7 +370,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/referrals", A, wrap(async (req, res) => { if (req.user.role === "referrer") return res.status(403).json({ message: "Use My consults in the referrer portal" }); maybePurge(); res.json(await db.list(scope(req))); }));
   app.get("/api/referrals/:id", A, wrap(async (req, res) => {
     const r=await findCase(req,res); if(!r) return;
-    await db.markOpened(r.id,req.user.name);
+    await db.markOpened(r.id,req.user.name,r.latestFollowupAt);
     await audit(req, "view_referral", r.id, r.ref);
     res.json({...await db.get(r.id),timeline:await db.timeline(r.id),images:(await db.images(r.id)).filter(im=>!im.followupId)});
   }));

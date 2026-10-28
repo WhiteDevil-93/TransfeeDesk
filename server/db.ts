@@ -164,10 +164,11 @@ export const db = {
     return r && !r.purged_at ? publicReferral(r) : null;
   },
   async resetPortal(id:number) { const code=crypto.randomBytes(16).toString("hex"); chk(await sb.from("referrals").update({portal_hash:sha(code)}).eq("id",id)); return code; },
-  async markOpened(id:number,name:string) {
-    const at=new Date().toISOString();
-    chk(await sb.from("referrals").update({opened_at:at,opened_by:name}).eq("id",id).is("opened_at",null));
-    chk(await sb.from("referrals").update({followup_seen_at:at}).eq("id",id));
+  // seenUpTo is the latest_followup_at the viewer is being shown, so a follow-up
+  // that arrives after the read stays flagged for the unit. It never moves back.
+  async markOpened(id:number,name:string,seenUpTo?:string|null) {
+    chk(await sb.from("referrals").update({opened_at:new Date().toISOString(),opened_by:name}).eq("id",id).is("opened_at",null));
+    if(seenUpTo) chk(await sb.from("referrals").update({followup_seen_at:seenUpTo}).eq("id",id).or(`followup_seen_at.is.null,followup_seen_at.lt.${JSON.stringify(seenUpTo)}`));
   },
   async timeline(id:number):Promise<Followup[]> {
     const rows:any[]=chk(await sb.from("referral_followups").select("id,created_at,author,kind,body").eq("referral_id",id).order("created_at",{ascending:true})) || [];

@@ -65,8 +65,11 @@ try {
     const advice=await api("POST","/api/portal",{ref:receipt.ref,code:receipt.followupCode});assert.equal(advice.status,"advised");assert.equal(advice.decidedBy,creds[team].clinician.name);assert.equal(advice.timeline[0].body,"QA clinical advice");
     await api("POST","/api/portal/followup",{ref:receipt.ref,code:receipt.followupCode,body:"QA new clinical findings",images:[image]});
     const updates=await api("GET","/api/referrals",undefined,creds[team].clinician.token);
-    const updated=updates.find((x:any)=>x.id===r.id);assert(updated.latestFollowupAt>updated.followupSeenAt);
+    const unseen=(x:any)=>!!x.latestFollowupAt && (!x.followupSeenAt || x.latestFollowupAt>x.followupSeenAt);
+    const updated=updates.find((x:any)=>x.id===r.id);assert(unseen(updated),"a new follow-up is flagged for the unit");
     const details=await api("GET",`/api/referrals/${r.id}`,undefined,creds[team].clinician.token);assert.equal(details.timeline.length,2);assert.equal(details.timeline[1].images.length,1);
+    const seen=(await api("GET","/api/referrals",undefined,creds[team].clinician.token)).find((x:any)=>x.id===r.id);
+    assert(!unseen(seen),"viewing the case clears the follow-up flag");assert.equal(seen.followupSeenAt,seen.latestFollowupAt);
     await api("PATCH",`/api/referrals/${r.id}`,{team:foreign},creds[team].clinician.token,403);
     await api("GET",`/api/referrals/${r.id}/export`,undefined,creds[team].unit_admin.token,403);
     await api("GET",`/api/referrals/${r.id}/export`,undefined,rootToken);
