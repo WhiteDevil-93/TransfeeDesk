@@ -283,9 +283,10 @@ function Detail({ r: lite, me, onClose, user }: { r: Referral|null; me: string; 
   const dr = r.doctorName.replace(/^dr\.?\s*/i,"");
   const bedTxt = r.bedStatus === "Bed allocated" || r.bedStatus === "Patient en route" ? ` Bed: ${r.bedWard || "allocated"}.` : r.bedStatus === "Bed requested" ? " A bed has been requested; we will confirm when allocated." : "";
   const msg = (s: Status) => {
-    const base = `Dear Dr ${dr}, re: your BaraBridge referral ${r.ref} (patient ${r.patientInitials}).`;
+    // WhatsApp is outside BaraBridge's controls: name the reference only, keep clinical detail in the portal.
+    const base = `Dear Dr ${dr}, re: your BaraBridge referral ${r.ref}.`;
     const body = s==="accepted" ? ` The patient has been ACCEPTED by ${r.team}.${bedTxt} Please confirm transfer arrangements with the unit.` : s==="declined" ? " Unfortunately we are unable to accept this referral at this time." : s==="waiting" ? " This referral is on our WAITING list." : s==="advised" ? " Clinical advice is available in your secure follow-up portal. This is not an acceptance for transfer." : "";
-    return `${base}${body}${s!=="advised" && (note || r.decisionNote) ? ` Note: ${note || r.decisionNote}` : ""} - ${me}`;
+    return `${base}${body}${s!=="advised" && (note || r.decisionNote) ? " A note from the team is in your secure follow-up portal." : ""} - ${me}`;
   };
   const fwd = `BaraBridge: ${r.priority} ${specName(specs, r.specialty)} consult ${r.ref} from ${r.hospital} needs your review. Please sign in to BaraBridge to see the details: ${window.location.href.split("#")[0]} - ${me}`;
   const logShare = (to: string) => apiRequest("POST", `/api/referrals/${r.id}/shared`, { to }).catch(() => {});

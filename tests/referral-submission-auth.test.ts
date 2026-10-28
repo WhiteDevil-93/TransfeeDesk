@@ -17,11 +17,12 @@ test("verified submission and referrer follow-up stay confined to the owner's ca
   (db as any).sessionUser = async (token: string) => {
     if (token === "staff") return { id: 1, role: "clinician", team: "MEU", mustChange: false };
     if (token === "pending") return { id: 2, role: "referrer", verifyStatus: "card_pending", mustChange: true };
-    if (token === "verified") return { id: 3, role: "referrer", verifyStatus: "verified", mustChange: true };
+    if (token === "verified") return { id: 3, role: "referrer", name: "Dr Verified Referrer", phone: "0711111111", email: "verified@example.invalid", verifyStatus: "verified", mustChange: true };
     return null;
   };
-  (db as any).create = async (_body: unknown, referrerId: number) => {
-    createdFor = referrerId;
+  let createdBody: any = null;
+  (db as any).create = async (body: unknown, referrerId: number) => {
+    createdFor = referrerId; createdBody = body;
     return { id: 11, ref: "QA-TEST", followupCode: "test-code" };
   };
   (db as any).audit = async () => {};
@@ -51,6 +52,7 @@ test("verified submission and referrer follow-up stay confined to the owner's ca
     const approved = await submit("verified");
     assert.equal(approved.status, 200, await approved.text());
     assert.equal(createdFor, 3);
+    assert.deepEqual([createdBody.doctorName, createdBody.phone, createdBody.email], ["Dr Verified Referrer", "0711111111", "verified@example.invalid"], "referrer identity comes from the account, not the form");
     const base = `http://127.0.0.1:${address.port}`;
     const headers = { authorization: "Bearer verified", "content-type": "application/json" };
     const detail = await fetch(`${base}/api/referrer/referrals/11`, { headers });

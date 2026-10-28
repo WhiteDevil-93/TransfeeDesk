@@ -7,6 +7,7 @@ process.env.SUPABASE_URL = "https://example.supabase.co";
 process.env.SUPABASE_PUBLISHABLE_KEY = "navigation-fixture-key";
 const { db, defaults, hashPw } = await import("../server/db");
 const { registerRoutes } = await import("../server/routes");
+const fixtureHash = await hashPw("navigation-test-password");
 const users: any[] = [
   { id: 1, username: "staff", name: "QA Receiving Staff", role: "clinician", team: "MEU" },
   { id: 2, username: "admin", name: "QA Administrator", role: "admin", team: null },
@@ -15,7 +16,7 @@ const users: any[] = [
   { id: 5, username: "temporary", name: "QA First Login", role: "clinician", team: "TEU", must_change: true },
   { id: 6, username: "unit_meu", name: "QA MEU Unit Admin", role: "unit_admin", team: "MEU" },
   { id: 7, username: "unit_teu", name: "QA TEU Unit Admin", role: "unit_admin", team: "TEU" },
-].map(u => ({ active: true, must_change: false, phone: "0700000000", specialty: "Emergency Medicine", profession: "doctor", pass_hash: hashPw("navigation-test-password"), ...u }));
+].map(u => ({ active: true, must_change: false, phone: "0700000000", specialty: "Emergency Medicine", profession: "doctor", pass_hash: fixtureHash, ...u }));
 const safe = (u: any) => ({ id: u.id, username: u.username, name: u.name, role: u.role, team: u.team, phone: u.phone, active: u.active, mustChange: u.must_change, specialty: u.specialty, profession: u.profession, verifyStatus: u.verify_status || "none", hasCard: !!u.card_cipher });
 const baseUserCount = users.length;
 const tokens = new Map<string, number>();
@@ -26,6 +27,9 @@ state.userByName = async (name: string) => users.find(u => u.username === name);
 state.createSession = async (id: number) => { const token = `fixture-${id}`; tokens.set(token, id); return token; };
 state.sessionUser = async (token: string) => { const u = users.find(u => u.id === tokens.get(token)); return u ? safe(u) : null; };
 state.endSession = async (token: string) => { tokens.delete(token); };
+state.endUserSessions = async (id: number) => { for (const [token, owner] of Array.from(tokens)) if (owner === id) tokens.delete(token); };
+state.endOtherSessions = async (id: number, keep: string) => { for (const [token, owner] of Array.from(tokens)) if (owner === id && token !== keep) tokens.delete(token); };
+state.purgeStaleSessions = async () => {};
 state.updateUser = async (id: number, patch: any) => { Object.assign(users.find(u => u.id === id), patch); };
 state.settings = async () => ({ ...defaults, sound: false });
 state.audit = async () => {};
@@ -49,7 +53,8 @@ state.respond = async (id: number, status: string, decisionNote: string, name: s
   const r = records.find(r => r.id === id); Object.assign(r, { status, decisionNote, decidedBy: name, decidedAt: new Date().toISOString() });
   updates.push({ id: updates.length + 1, referralId: id, author: name, kind: status === "advised" ? "advice" : "decision", body: decisionNote, createdAt: new Date().toISOString(), images: [] }); return r;
 };
-const app = express(); app.use(express.json());
+const { applyHttpHardening } = await import("../server/http-hardening");
+const app = express(); applyHttpHardening(app, true);
 app.get("/api/geocode", (_req, res) => res.json([{ name: "QA Test Facility", lat: "-26.1", lon: "27.9", health: true, kind: "hospital" }]));
 app.get("/api/catchment", (_req, res) => res.json({ status: "matched", border: [[-26,27.8],[-26,28],[-26.2,28],[-26.2,27.8]], facilities: [{ name: "QA Referral Centre", location: [-26.12,27.92] }], color: "#0f766e", source: "fixture" }));
 app.get("/api/health", (_req, res) => res.json({ status: "ready", fixture: true }));
@@ -57,8 +62,8 @@ app.get(["/api/roster", "/api/referrer/roster"], (_req, res) => res.json({ specs
 app.get("/api/unit-members", (_req, res) => res.json([]));
 app.get("/api/unit-roster", (_req, res) => res.json({ entries: [] }));
 app.post("/api/fixture/expire", (_req, res) => { tokens.clear(); res.json({ ok: true }); });
-app.post("/api/fixture/reset", (_req, res) => { tokens.clear(); records.length = 0; updates.length = 0; users.splice(baseUserCount); for (const u of users) { u.pass_hash = hashPw("navigation-test-password"); u.must_change = u.username === "temporary"; u.card_cipher = null; } res.json({ ok: true }); });
-app.post("/api/referrer/signup", (req, res) => { users.push({ ...users[3], ...req.body, role: "referrer", id: users.length + 1, card_cipher: null, pass_hash: hashPw(req.body.password) }); res.json({ autoApproved: false, message: "Upload your staff card before sending." }); });
+app.post("/api/fixture/reset", (_req, res) => { tokens.clear(); records.length = 0; updates.length = 0; users.splice(baseUserCount); for (const u of users) { u.pass_hash = fixtureHash; u.must_change = u.username === "temporary"; u.card_cipher = null; } res.json({ ok: true }); });
+app.post("/api/referrer/signup", async (req, res) => { users.push({ ...users[3], ...req.body, role: "referrer", id: users.length + 1, card_cipher: null, pass_hash: await hashPw(req.body.password) }); res.json({ autoApproved: false, message: "Upload your staff card before sending." }); });
 const server = createServer(app); await registerRoutes(server, app);
 app.use("/api", (_req, res) => res.status(404).json({ message: "Unhandled fixture endpoint" }));
 app.use(express.static(path.resolve("dist/public")));

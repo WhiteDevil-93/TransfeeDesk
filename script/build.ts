@@ -5,29 +5,9 @@ import { rm, readFile } from "node:fs/promises";
 // server deps to bundle to reduce openat(2) syscalls
 // which helps cold start times
 const allowlist = [
-  "@google/generative-ai",
-  "axios",
-  "cors",
-  "date-fns",
-  "drizzle-orm",
-  "drizzle-zod",
   "express",
-  "express-rate-limit",
-  "express-session",
-  "jsonwebtoken",
-  "memorystore",
-  "multer",
-  "nanoid",
-  "nodemailer",
-  "openai",
-  "passport",
-  "passport-local",
-  "stripe",
-  "uuid",
   "ws",
-  "xlsx",
   "zod",
-  "zod-validation-error",
 ];
 
 async function buildAll() {
@@ -65,6 +45,17 @@ async function buildAll() {
     bundle: true,
     format: "cjs",
     outfile: "dist/hpcsa-scrape.cjs",
+    external: externals,
+    logLevel: "info",
+  });
+
+  console.log("building data re-encryption tool...");
+  await esbuild({
+    entryPoints: ["script/reencrypt-data.ts"],
+    platform: "node",
+    bundle: true,
+    format: "cjs",
+    outfile: "dist/reencrypt-data.cjs",
     external: externals,
     logLevel: "info",
   });

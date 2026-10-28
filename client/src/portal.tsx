@@ -102,7 +102,7 @@ function CardUpload({ me, onUploaded }: { me: any; onUploaded: () => void }) {
     catch (e: any) { setErr(messageOf(e)); } finally { setBusy(false); }
   };
   return <Card className="p-5 space-y-4 border-amber-200"><SectionHeading>{me?.hasCard ? "Card received · review pending" : "Verify your account"}</SectionHeading>
-    <p className="text-sm leading-relaxed text-muted-foreground">{me?.hasCard ? "Your staff card has been received. An administrator needs to verify it before you can send referrals. Check the status below or use the on-call roster while you wait." : "Upload your staff card showing your name, facility and professional details. An administrator will review it. You can send referrals after verification."}</p>
+    <p className="text-sm leading-relaxed text-muted-foreground">{me?.hasCard ? "Your staff card has been received. An administrator needs to verify it before you can send referrals. Check the status below. The on-call roster opens once you are verified." : me?.verifyStatus === "hpcsa" ? "Your HPCSA registration matched the public register. An administrator still needs to confirm the account is yours; uploading your staff card speeds this up." : "Upload your staff card showing your name, facility and professional details. An administrator will review it. You can send referrals after verification."}</p>
     {img && <img src={`data:${mime};base64,${img}`} alt="Staff card preview" className="max-h-56 rounded border" />}
     <div className="space-y-3"><Input aria-label="Staff card photo" type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => pick(e.target.files)} /><Button className="w-full sm:w-auto" onClick={send} disabled={busy || !img}>{busy ? "Sending..." : me?.hasCard ? "Replace staff card" : "Send staff card"}</Button></div>
     {err && <p className="text-sm text-destructive" role="alert">{err}</p>}</Card>;
@@ -122,11 +122,11 @@ function Dashboard({ me, onLogout, onRefresh, initialTeam, initialNew }: { me: a
       <Badge className={verified ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100" : "bg-amber-100 text-amber-900 dark:bg-amber-900 dark:text-amber-100"}>{isAdmin ? "Global administrator" : verified ? "Verified" : "Verification pending"}</Badge>
       <Button size="sm" variant="ghost" className="ml-auto" onClick={onLogout}><LogOut className="h-4 w-4 mr-1" />Sign out</Button></div>
     {!verified && <><CardUpload me={me} onUploaded={onRefresh} /><Button size="sm" variant="outline" onClick={onRefresh}>Check verification status</Button></>}
-    <nav aria-label="Referrer workspace" className="bb-referrer-nav">{([["consults", isAdmin ? "All consults" : "My consults", ClipboardList], ["new", "New consult", Send], ["roster", "On-call roster", CalendarDays]] as const).map(([t, l, I]) =>
+    <nav aria-label="Referrer workspace" className="bb-referrer-nav">{([["consults", isAdmin ? "All consults" : "My consults", ClipboardList], ["new", "New consult", Send], ...(verified ? [["roster", "On-call roster", CalendarDays]] as const : [])] as const).map(([t, l, I]) =>
       <button key={t} aria-current={tab === t ? "page" : undefined} onClick={() => setTab(t as any)}><I/>{l}</button>)}</nav>
     {tab === "new" && <Button variant="ghost" onClick={() => setTab("consults")}>{isAdmin ? "Back to all consults" : "Back to my consults"}</Button>}
     {tab === "new" && (verified ? <Suspense fallback={<p role="status">Loading referral form...</p>}><ConsultForm me={me} initialTeam={initialTeam} onDone={() => setTab("consults")} /></Suspense> : <Card className="p-5">Your account must be verified before you can send a referral. Upload your staff card above, then check your verification status.</Card>)}
-    {tab === "roster" && <RosterView />}
+    {tab === "roster" && verified && <RosterView />}
     {tab === "consults" && <>
       <div className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-2xl font-bold tracking-tight">{isAdmin ? "All consults" : "My consults"}</h1><p className="mt-1 text-sm text-muted-foreground">Track referrals, clinical advice and transfer decisions.</p></div>{verified && <Button onClick={() => setTab("new")}><Plus/>New referral</Button>}</div>
       {list.length > 0 && <div className="relative"><Search className="absolute left-3 top-4 h-4 w-4 text-muted-foreground"/><Input aria-label="Search your consults" placeholder="Search initials, reference or diagnosis" className="pl-10" value={search} onChange={event => setSearch(event.target.value)}/></div>}

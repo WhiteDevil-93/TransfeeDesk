@@ -35,7 +35,7 @@ test("live handlers reject missing location before writing and handle catchment 
   process.env.APP_DB_SECRET = "location-test-secret-longer-than-thirty-two-characters";
   process.env.SUPABASE_URL = "https://example.supabase.co"; process.env.SUPABASE_PUBLISHABLE_KEY = "location-test-key";
   const {db} = await import("../server/db"), {registerRoutes} = await import("../server/routes");
-  t.mock.method(db,"sessionUser",async token => token === "referrer" ? {id:7,name:"QA",role:"referrer",verifyStatus:"verified"} as any : null);
+  t.mock.method(db,"sessionUser",async token => token === "referrer" ? {id:7,name:"QA Referrer",phone:"0700000000",role:"referrer",verifyStatus:"verified"} as any : null);
   const create = t.mock.method(db,"create",async () => ({id:11,ref:"QA-LOCATION",followupCode:"fixture"}) as any);
   t.mock.method(db,"audit",async () => {});
   const nativeFetch = globalThis.fetch; let mode = "offline"; const providerRequests:string[] = [];

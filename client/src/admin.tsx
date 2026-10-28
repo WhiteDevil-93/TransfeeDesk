@@ -90,29 +90,29 @@ function Referrers() {
   const { toast } = useToast();
   const [cardId, setCardId] = useState<number | null>(null);
   const [cardData, setCardData] = useState<string | null>(null);
-  const act = (id: number, action: "approve" | "reject") => useMutation({
-    mutationFn: async () => (await apiRequest("POST", `/api/pending-referrers/${id}/${action}`)).json(),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/pending-referrers"] }); toast({ title: action === "approve" ? "Referrer verified" : "Referrer rejected" }); },
+  const decision = useMutation({
+    mutationFn: async ({ id, action }: { id: number; action: "approve" | "reject" }) => (await apiRequest("POST", `/api/pending-referrers/${id}/${action}`)).json(),
+    onSuccess: (_data, { action }) => { queryClient.invalidateQueries({ queryKey: ["/api/pending-referrers"] }); toast({ title: action === "approve" ? "Referrer verified" : "Referrer rejected" }); },
     onError: (e) => toast({ title: errMsg(e), variant: "destructive" }),
   });
-  const approve = (id: number) => act(id, "approve").mutate();
-  const reject = (id: number) => act(id, "reject").mutate();
+  const approve = (id: number) => decision.mutate({ id, action: "approve" });
+  const reject = (id: number) => decision.mutate({ id, action: "reject" });
   const viewCard = async (id: number) => {
     setCardId(id); setCardData(null);
     try { const d = await (await apiRequest("GET", `/api/pending-referrers/${id}/card`)).json(); setCardData(d.data); }
     catch (e) { setCardData(null); toast({ title: errMsg(e), variant: "destructive" }); }
   };
   return <div className="space-y-4">
-    <p className="text-sm text-muted-foreground">Referral-PWA accounts that could not be auto-verified against the HPCSA register. Review the staff card, then verify or reject.</p>
-    {isLoading ? <Skeleton className="h-40" /> : data.length === 0 ? <Card className="p-8 text-center text-muted-foreground">No pending referrers. New sign-ups that don't match HPCSA appear here.</Card> :
+    <p className="text-sm text-muted-foreground">Referrer accounts waiting for verification. The HPCSA register is public, so a register match shows the person exists but not that this sign-up is them. Confirm identity (staff card, or a call to the number on file) before verifying.</p>
+    {isLoading ? <Skeleton className="h-40" /> : data.length === 0 ? <Card className="p-8 text-center text-muted-foreground">No pending referrers. New sign-ups appear here.</Card> :
       <Card className="divide-y">{data.map((r) => <div key={r.id} className="p-4 flex flex-wrap gap-3 items-center">
-        <div className="flex-1 min-w-[220px]"><p className="font-medium">{r.name} {r.hasCard && <Badge variant="outline" className="ml-1">Card on file</Badge>}</p>
-          <p className="text-xs text-muted-foreground">{r.profession} · {r.email} · {r.phone}</p>
+        <div className="flex-1 min-w-[220px]"><p className="font-medium">{r.name} {r.hpcsaMatched && <Badge variant="outline" className="ml-1">HPCSA register match</Badge>}{r.hasCard && <Badge variant="outline" className="ml-1">Card on file</Badge>}</p>
+          <p className="text-xs text-muted-foreground">{[r.profession, r.hospital, r.email, r.phone].filter(Boolean).join(" · ")}</p>
           {r.hpcsa && <p className="text-xs text-muted-foreground">HPCSA {r.hpcsa}</p>}</div>
         <div className="flex gap-2">
           {r.hasCard && <Button size="sm" variant="outline" onClick={() => viewCard(r.id)}>View card</Button>}
-          <Button size="sm" onClick={() => approve(r.id)} className="bg-emerald-600 hover:bg-emerald-700 text-white"><Check className="h-4 w-4 mr-1" />Verify</Button>
-          <Button size="sm" variant="destructive" onClick={() => reject(r.id)}><X className="h-4 w-4 mr-1" />Reject</Button>
+          <Button size="sm" disabled={decision.isPending} onClick={() => approve(r.id)} className="bg-emerald-600 hover:bg-emerald-700 text-white"><Check className="h-4 w-4 mr-1" />Verify</Button>
+          <Button size="sm" variant="destructive" disabled={decision.isPending} onClick={() => reject(r.id)}><X className="h-4 w-4 mr-1" />Reject</Button>
         </div></div>)}</Card>}
     <Sheet open={cardId !== null} onOpenChange={(o) => { if (!o) { setCardId(null); setCardData(null); } }}>
       <SheetContent className="w-full sm:max-w-lg overflow-y-auto"><SheetHeader><SheetTitle>Staff card</SheetTitle></SheetHeader>

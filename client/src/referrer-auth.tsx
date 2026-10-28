@@ -29,7 +29,7 @@ export function ReferrerAuth() {
     try {
       const result = await (await apiRequest("POST", "/api/referrer/signup", profile, { signal: AbortSignal.timeout(60000) })).json();
       const authenticated = await (await apiRequest("POST", "/api/login", { username: profile.username, password: profile.password })).json();
-      toast({ title: result.autoApproved ? "Verified against HPCSA" : "Account created", description: result.message }); signIn(authenticated);
+      toast({ title: result.hpcsaMatched ? "Matched to the HPCSA register" : "Account created", description: result.message }); signIn(authenticated);
     } catch (e) { setError(messageOf(e)); } finally { setBusy(false); }
   };
   return <div className="max-w-md mx-auto space-y-4 pb-4"><BackHome/><Card className="p-6 sm:p-8 space-y-6">

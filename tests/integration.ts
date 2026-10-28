@@ -28,9 +28,9 @@ try {
   const root=await db.addUser("qa_root_"+run,"QA global admin","admin",password); createdUsers.push(root.id);
   const rootToken=await login(root.username); creds.root={username:root.username,password:password+"x",token:rootToken};
   await api("GET","/api/referrals",undefined,undefined,401);
-  const referrer=await db.addReferrer({username:"qa_referrer_"+run,name:"QA Referrer",password,email:`qa-${run}@example.invalid`,phone:"0700000000",hospital:"QA Facility",department:"ED",specialty:"other",profession:"doctor",hpcsa:""});
+  const referrer=await db.addReferrer({username:"qa_referrer_"+run,name:"QA Referrer",password,email:`qa-${run}@example.invalid`,phone:"0700000000",hospital:"QA Facility",department:"ED",specialty:"other",profession:"doctor",hpcsa:"",verifyStatus:"none"});
   createdUsers.push(referrer.id);
-  await db.approveReferrer(referrer.id,"QA global admin");
+  await db.approveReferrer(referrer.id);
   const referrerToken=await api("POST","/api/login",{username:referrer.username,password}).then(r=>r.token);
   for(const team of ["MEU","TEU","SEU"]){
     creds[team]={};
