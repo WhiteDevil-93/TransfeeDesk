@@ -22,7 +22,7 @@ The receiving team opens the referral, reviews images and the clinical timeline,
 
 The referring doctor opens “Follow up referral” and enters the reference plus private code. This shows first-opening time, response author, advice, decision history and images. A new update can include new examination findings, investigation results, deterioration, a follow-up question and up to three further images.
 
-Updates do not overwrite the original history. New updates are flagged on the receiving unit’s queue, including follow-ups to already accepted/declined/advised cases. While a case is open its timeline refreshes; unopened updates trigger a browser notification and sound on a signed-in desk.
+The receiving team can ask the referrer for more information from the History & chat tab; the referral then shows as waiting for the referrer, who is notified (and reminded) and replies from the same page. Questions and replies stay on the referral timeline. Updates do not overwrite the original history. New updates are flagged on the receiving unit’s queue, including follow-ups to already accepted/declined/advised cases. While a case is open its timeline refreshes; unopened updates trigger a browser notification and sound on a signed-in desk.
 
 Lost-code recovery is restricted to consultants and the global administrator. They must verify the referring doctor’s identity before generating and privately delivering a replacement code. The old code immediately stops working.
 

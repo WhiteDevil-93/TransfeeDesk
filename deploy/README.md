@@ -56,5 +56,10 @@ surname checklist. Enable `transferdesk-hpcsa.timer` only after that run
 passes. The timer refreshes the checklist twice monthly without restarting
 the clinical server. It does not perform the full A-Z register export.
 
+Web push is off until `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT`
+are added to `/var/lib/transferdesk/runtime.env` (keys from `npx web-push
+generate-vapid-keys`) and `supabase/migration_chat_push.sql` is applied; restart
+TransferDesk afterwards and check that `/api/health` reports `push: "enabled"`.
+
 This deployment does not claim native Windows/Android/iOS packaging, push
 delivery, live clinical workflow validation, or tested backup restoration.

@@ -6,6 +6,9 @@ import { serveStatic } from "./static";
 import { createServer } from "node:http";
 import { runBulkExport } from "../script/hpcsa-scrape";
 import { databaseReady } from "./readiness";
+import { auditStatus } from "./db";
+import { configurePush, pushEnabled } from "./push";
+import { startPushScheduler } from "./notify";
 
 const app = express();
 const httpServer = createServer(app);
@@ -74,11 +77,14 @@ app.use((req, res, next) => {
   app.get("/api/health", async (_req, res) => {
     try {
       const ready = await databaseReady();
-      res.status(ready ? 200 : 503).json({ status: ready ? "ready" : "unavailable" });
+      const audit = auditStatus();
+      res.status(ready ? 200 : 503).json({ status: ready ? "ready" : "unavailable", audit: audit.queued || audit.dropped ? { state: "degraded", ...audit } : { state: "ok" }, push: pushEnabled() ? "enabled" : "not configured" });
     } catch {
       res.status(503).json({ status: "unavailable" });
     }
   });
+  if (configurePush()) startPushScheduler();
+  else log("push notifications are off: set VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY and VAPID_SUBJECT", "push");
   await registerRoutes(httpServer, app);
   app.use("/api", (_req, res) => res.status(404).json({ message: "Not found" }));
 

@@ -32,6 +32,7 @@ const login = async (route, account) => {
 try {
   if (!process.argv.includes("--public-only")) assert((await page.request.post(`${base}/api/fixture/reset`)).ok());
   await go("/portal"); await visible(page.getByRole("heading", { name: "Referring clinician portal" }));
+  await visible(page.getByText(/sign out when you finish/));
   await capture("02-referrer-entry");
   await page.getByRole("link", { name: "Go to staff sign-in", exact: true }).click();
   await visible(page.getByRole("heading", { name: "Receiving staff sign-in" })); await capture("03-staff-entry");
@@ -46,6 +47,9 @@ try {
     await page.getByRole("link", { name: "BaraBridge home" }).click(); await visible(page.getByRole("heading", { name: "Welcome to BaraBridge" }));
   }
   check("Public entry, follow-up, status, privacy and unknown pages have recovery navigation");
+  await go("/status"); await visible(page.getByLabel("Reference number", { exact: true })); await visible(page.getByLabel("Cellphone number on the referral", { exact: true }));
+  await go("/followup"); await visible(page.getByLabel("Referral reference", { exact: true })); await visible(page.getByLabel("Private follow-up code", { exact: true }));
+  check("Status and follow-up forms have programmatic labels");
   if (!process.argv.includes("--public-only")) {
     await login("/portal", "staff"); await visible(page.getByRole("heading", { name: "MEU referral desk" }));
     assert.equal(await page.getByTestId("link-Admin").count(), 0);
@@ -63,6 +67,7 @@ try {
 
     await login("/login", "referrer"); await visible(page.getByText("Verified", { exact: true })); assert(page.url().endsWith("#/portal"));
     await capture("06-referrer-workspace");
+    assert.deepEqual(await page.evaluate(() => [localStorage.getItem("td_token"), Boolean(sessionStorage.getItem("td_token"))]), [null, true], "referrer token lives in sessionStorage only");
     await go("/login"); await visible(page.getByRole("heading", { name: "You're signed in as a referrer" }));
     await page.getByRole("link", { name: "Continue to my consults" }).click();
     await page.getByRole("button", { name: "New consult", exact: true }).click();
@@ -148,6 +153,9 @@ try {
     await page.getByRole("button", { name: "New consult", exact: true }).click();
     await visible(page.getByText(/Your account must be verified before you can send a referral\. Upload/));
     assert.equal(await page.getByRole("button", { name: "Submit consult", exact: true }).count(), 0);
+    await page.getByRole("button", { name: "On-call roster", exact: true }).click();
+    await visible(page.getByText(/available once your account is verified/));
+    assert.equal(await page.getByText("On-call roster", { exact: true }).count() > 0, true);
     await capture("09-pending-verification"); await page.getByRole("button", { name: "Sign out", exact: true }).click();
     check("Pending account can navigate and sign out but cannot submit");
 
@@ -173,8 +181,15 @@ try {
       const response = await page.request.post(`${base}/api/referrals`, { headers: fixtureHeaders, data: { ...original, consent: true, suggestedPriority: priority, diagnosis } });
       assert(response.ok(), `Priority fixture creation failed: ${response.status()}`);
     }
-    await login("/login", "admin"); await visible(page.getByRole("heading", { name: "All-unit referral desk" }));
+    await login("/login", "admin");
     await visible(page.getByRole("alertdialog", { name: "P1 referral alert" })); await capture("15-p1-alert");
+    assert.equal(await page.getByRole("heading", { name: "All-unit referral desk" }).count(), 0, "while the alarm is open the page behind it is hidden from assistive technology");
+    const alarm = page.getByRole("alertdialog", { name: "P1 referral alert" });
+    assert.equal(await alarm.getAttribute("aria-modal") ?? await alarm.evaluate(node => node.closest("[aria-modal]") ? "true" : null), "true", "the alarm is a modal dialog");
+    assert.equal(await page.evaluate(() => document.activeElement?.textContent), "Acknowledge and open", "focus starts on the acknowledge button");
+    assert.equal(await alarm.locator("a button, button a").count(), 0, "no interactive element is nested inside another");
+    for (let i = 0; i < 6; i++) { await page.keyboard.press("Tab"); assert.equal(await page.evaluate(() => Boolean(document.activeElement?.closest('[role="alertdialog"]'))), true, "Tab stays inside the alarm"); }
+    await page.keyboard.press("Escape"); assert.equal(await alarm.count(), 1, "Escape does not dismiss an unacknowledged P1");
     await page.getByRole("button", { name: "Acknowledge and open", exact: true }).click();
     await page.getByRole("alertdialog", { name: "P1 referral alert" }).waitFor({ state: "hidden" });
     await page.getByRole("button", { name: "Close", exact: true }).click();
@@ -183,8 +198,56 @@ try {
     assert.match(await queueCards.nth(1).innerText(), /QA urgent priority/);
     check("P1 alert acknowledges and opens its case; P1 then P2 precede newer or updated routine cases in the queue");
     await capture("13-populated-receiving-queue");
+
+    let releaseDetail; const detailGate = new Promise(resolve => { releaseDetail = resolve; });
+    const gateDetail = async route => { if (route.request().method() === "GET") await detailGate; await route.continue(); };
+    await page.route(/\/api\/referrals\/\d+$/, gateDetail);
+    await queueCards.nth(1).click();
+    await visible(page.getByText(/Loading the full referral/));
+    for (const id of ["button-accept", "button-wait", "button-decline"]) assert.equal(await page.getByTestId(id).isDisabled(), true, `${id} stays disabled until the full record loads`);
+    assert.equal(await page.getByTestId("input-bedward").isDisabled(), true);
+    releaseDetail();
+    await page.waitForFunction(() => document.querySelector('[data-testid="button-accept"]')?.disabled === false);
+    await page.unroute(/\/api\/referrals\/\d+$/, gateDetail);
+    await page.getByRole("button", { name: "Close", exact: true }).click();
+    check("Decisions stay disabled until the full referral has loaded");
+
+    page.once("dialog", dialog => { assert.match(dialog.message(), /Escalate .* to P1/); dialog.dismiss(); });
+    await queueCards.nth(1).click(); await page.waitForFunction(() => document.querySelector('[data-testid="button-accept"]')?.disabled === false);
+    const priorityPatches = []; const watchPatches = request => { if (request.method() === "PATCH") priorityPatches.push(request.postData()); };
+    page.on("request", watchPatches);
+    await page.getByTestId("button-set-P1").click(); await page.waitForTimeout(500);
+    assert.deepEqual(priorityPatches, [], "dismissing the escalation prompt sends no change");
+    page.once("dialog", dialog => dialog.accept());
+    await Promise.all([page.waitForResponse(response => response.request().method() === "PATCH" && response.status() === 200), page.getByTestId("button-set-P1").click()]);
+    assert.match(priorityPatches[0], /"priority":"P1"/);
+    page.off("request", watchPatches);
+    await visible(page.getByTestId("button-ack-detail"));
+    assert.equal(await page.getByRole("alertdialog", { name: "P1 referral alert" }).count(), 0, "the open case is not duplicated in the alarm");
+    await Promise.all([page.waitForResponse(response => response.request().method() === "PATCH" && response.status() === 200), page.getByTestId("button-ack-detail").click()]);
+    await page.getByTestId("button-ack-detail").waitFor({ state: "hidden" });
+    await page.getByRole("button", { name: "Close", exact: true }).click();
+    check("Escalating to P1 asks for confirmation, and an open unacknowledged P1 is acknowledged only by its button");
+
+    const portalCalls = [];
+    page.on("request", request => { if (request.url().includes("/api/portal")) portalCalls.push({ url: request.url(), token: request.headers()["x-portal-token"], body: request.postData() || "" }); });
+    await go("/followup");
+    await page.getByTestId("input-portal-ref").fill(original.ref); await page.getByTestId("input-portal-code").fill("qa-private-code");
+    await page.getByTestId("button-portal-open").click(); await visible(page.getByTestId("text-opened"));
+    await page.getByTestId("input-followup").fill("QA portal update"); await page.getByTestId("button-followup-send").click();
+    await visible(page.getByText("Update sent. The team will see it marked as new.", { exact: true }));
+    assert.match(portalCalls[0].body, /qa-private-code/); assert.equal(portalCalls[0].token, undefined);
+    for (const call of portalCalls.slice(1)) { assert.ok(call.token, `${call.url} carries the portal token`); assert.doesNotMatch(call.body, /qa-private-code/, `${call.url} does not resend the code`); }
+    assert.ok(portalCalls.length >= 3);
+    assert.equal(await page.evaluate(() => JSON.stringify([...Object.entries(localStorage), ...Object.entries(sessionStorage)]).includes("qa-private-code")), false);
+    await page.route("**/api/portal/followup", route => route.fulfill({ status: 410, contentType: "application/json", body: JSON.stringify({ message: "Your follow-up session has ended. Enter your reference and code again." }) }));
+    await page.getByTestId("input-followup").fill("QA late update"); await page.getByTestId("button-followup-send").click();
+    await visible(page.getByText("Your follow-up session has ended. Enter your reference and code again.", { exact: true })); await visible(page.getByTestId("input-portal-code"));
+    await page.unroute("**/api/portal/followup");
+    await go("/queue"); await visible(page.getByRole("heading", { name: "All-unit referral desk" }));
+    check("Follow-up page sends the code once, then a token; an ended session asks for the code again without signing staff out");
     await page.getByText("QA synthetic consult", { exact: true }).click(); await visible(page.getByTestId("input-advice"));
-    await page.getByRole("tab", { name: "History", exact: true }).click();
+    await page.getByRole("tab", { name: "History & chat", exact: true }).click();
     await page.getByRole("tab", { name: "Images", exact: true }).click();
     await page.getByRole("tab", { name: "Clinical details", exact: true }).click();
     await visible(page.getByText(/Systolic BP: 120 mmHg/));

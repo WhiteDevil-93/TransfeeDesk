@@ -90,6 +90,40 @@ test("referrer profile email changes cannot take another account's address", asy
   });
 });
 
+test("a verified referrer who changes name or HPCSA number stays verified only if the register confirms it", async t => {
+  const stored = { name: "Jane Smith", hpcsaNumber: "MP0123456" };
+  t.mock.method(db, "sessionUser", async () => ({ id: 3, role: "referrer", ...stored, verifyStatus: "verified", mustChange: false }) as any);
+  t.mock.method(db, "audit", async () => {});
+  t.mock.method(db, "emailTaken", async () => false);
+  const updates: any[] = [];
+  t.mock.method(db, "updateReferrer", async (_id: number, b: any) => (updates.push(b), { id: 3, name: b.name ?? stored.name, hpcsaNumber: b.hpcsa !== undefined ? normalizeHpcsaNumber(b.hpcsa) : stored.hpcsaNumber, verifyStatus: "verified" }) as any);
+  let registered: any[] = [];
+  const lookup = t.mock.method(db, "hpcsaLookup", async () => ({ rows: registered }) as any);
+  const demote = t.mock.method(db, "demoteReferrer", async () => {});
+  const entry = (full_name: string, hpcsa_number: string, status = "ACTIVE") => ({ full_name, hpcsa_number, status });
+  const update = async (base: string, body: any) => (await post(`${base}/api/referrer/profile`, body, "t")).json();
+  await withApp(async base => {
+    assert.deepEqual(await update(base, { phone: "0711111111" }), { ok: true }, "phone");
+    assert.deepEqual(updates[0], { phone: "0711111111" }, "a partial update touches only the fields sent (no blanked HPCSA number or hospital)");
+    assert.deepEqual(await update(base, { name: "  jane   SMITH ", hpcsa: "mp 0123456" }), { ok: true }, "same");
+    assert.equal(lookup.mock.callCount(), 0, "unchanged identity needs no register check");
+    assert.equal(demote.mock.callCount(), 0);
+
+    registered = [];
+    const renamed = await update(base, { name: "Jane Brown" });
+    assert.equal(renamed.reverify, true);
+    assert.equal(demote.mock.callCount(), 1, "an unconfirmed new name returns the account to the verification queue");
+
+    registered = [entry("BROWN JANE", "MP 0123456")];
+    assert.deepEqual(await update(base, { name: "Jane Brown" }), { ok: true }, "confirmed");
+    assert.equal(demote.mock.callCount(), 1, "a name the register confirms keeps the account verified");
+
+    registered = [entry("SMITH JANE", "MP0123456", "REMOVED")];
+    assert.equal((await update(base, { hpcsa: "MP 0999999" })).reverify, true);
+    assert.equal(demote.mock.callCount(), 2, "a number that is not on the register is not trusted");
+  });
+});
+
 test("a verified referrer re-uploading a staff card keeps verification", async t => {
   let status = "verified";
   t.mock.method(db, "sessionUser", async () => ({ id: 3, role: "referrer", name: "Jane Smith", verifyStatus: status, mustChange: false }) as any);

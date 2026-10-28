@@ -16,5 +16,5 @@ export function notify(title: string, body: string, tag: string, urgent = false)
   if (!canNotify() || Notification.permission !== "granted") return;
   try { new Notification(title, { body, tag, requireInteraction: urgent } as any); } catch {}
 }
-export type AlertSettings = { p1: number; p2: number; p3: number; repeat: number; sound: boolean };
-export const defaultSettings: AlertSettings = { p1: 5, p2: 30, p3: 120, repeat: 5, sound: true };
+export type AlertSettings = { p1: number; p2: number; p3: number; repeat: number; escalate: number; sound: boolean };
+export const defaultSettings: AlertSettings = { p1: 5, p2: 30, p3: 120, repeat: 5, escalate: 10, sound: true };

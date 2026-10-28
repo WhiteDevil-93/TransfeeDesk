@@ -5,6 +5,8 @@ import type { Referral, ReferralInput, Doctor, User, AuditRow, AppSettings, Foll
 import { type Team } from "@shared/teams";
 import { normalizeHpcsaNumber } from "./hpcsa-verification";
 
+export type PushSub = { endpoint: string; p256dh: string; auth: string };
+
 if(!process.env.APP_DB_SECRET || process.env.APP_DB_SECRET.length<32) throw new Error("Server database secret is not configured");
 export const sb = createClient(process.env.SUPABASE_URL!, (process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY)!, { auth: { persistSession: false }, realtime: { transport: ws as any }, global: { headers: { "x-app-secret": process.env.APP_DB_SECRET || "" } } });
 const snake = (k: string) => k.replace(/[A-Z]/g, (c) => "_" + c.toLowerCase());
@@ -13,7 +15,7 @@ const toCamel = (o: any) => o && Object.fromEntries(Object.entries(o).map(([k, v
 const toSnake = (o: any) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined).map(([k, v]) => [snake(k), v]));
 function chk<T>(r: { data: T; error: any }): T { if (r.error) throw new Error(r.error.message); return r.data; }
 
-export const defaults: AppSettings = { p1: 5, p2: 30, p3: 120, repeat: 5, sound: true, retentionDays: 90,
+export const defaults: AppSettings = { p1: 5, p2: 30, p3: 120, repeat: 5, escalate: 10, sound: true, retentionDays: 90,
   responsibleParty: "Chris Hani Baragwanath Academic Hospital", infoOfficer: "", infoOfficerEmail: "", infoOfficerPhone: "" };
 
 /* ---------- passwords & sessions ---------- */
@@ -53,7 +55,27 @@ export function encryptImages(images:any[]) {
   });
 }
 
-export const REFERRAL_QUEUE_COLUMNS = "id,ref,team,consult_type,opened_at,opened_by,latest_followup_at,followup_seen_at,created_at,doctor_name,hospital,department,phone,specialty,current_location,bed_needed,patient_initials,age,sex,diagnosis,reason,suggested_priority,priority,status,decided_by,decided_at,bed_status,bed_ward,remind_at,ack_by,ack_at,purged_at,lat,lon,loc_source";
+export const REFERRAL_QUEUE_COLUMNS = "id,ref,team,consult_type,opened_at,opened_by,latest_followup_at,followup_seen_at,created_at,doctor_name,hospital,department,phone,specialty,current_location,bed_needed,patient_initials,age,sex,diagnosis,reason,suggested_priority,priority,status,decided_by,decided_at,bed_status,bed_ward,remind_at,ack_by,ack_at,purged_at,awaiting_info_at,lat,lon,loc_source";
+
+const AUDIT_QUEUE_MAX = 500;
+const auditQueue: Record<string, unknown>[] = [];
+let auditDropped = 0, auditFlusher: ReturnType<typeof setInterval> | undefined;
+export const auditStatus = () => ({ queued: auditQueue.length, dropped: auditDropped });
+async function insertAudit(row: Record<string, unknown>) {
+  try { const r = await sb.from("audit_log").insert(row); if (r.error) { console.error("audit failed", r.error.message); return false; } return true; }
+  catch (e: any) { console.error("audit failed", e?.message); return false; }
+}
+export async function flushAuditQueue() {
+  while (auditQueue.length) { if (!(await insertAudit(auditQueue[0]))) return; auditQueue.shift(); }
+}
+function ensureAuditFlusher() {
+  if (auditFlusher) return;
+  auditFlusher = setInterval(async () => {
+    await flushAuditQueue();
+    if (!auditQueue.length && auditFlusher) { clearInterval(auditFlusher); auditFlusher = undefined; }
+  }, 30_000);
+  auditFlusher.unref?.();
+}
 
 export const db = {
   /* users */
@@ -89,6 +111,9 @@ export const db = {
   },
   async approveReferrer(id: number, by: string) {
     chk(await sb.from("users").update({ verify_status: "verified", verified_at: new Date().toISOString() }).eq("id", id));
+  },
+  async demoteReferrer(id: number) {
+    chk(await sb.from("users").update({ verify_status: "card_pending", verified_at: null }).eq("id", id));
   },
   async rejectReferrer(id: number) {
     chk(await sb.from("users").update({ verify_status: "none", verified_at: null, card_cipher: null, card_iv: null, card_tag: null }).eq("id", id));
@@ -169,10 +194,15 @@ export const db = {
     catch(e) { await sb.from("referrals").delete().eq("id",r.id); throw e; }
     return {...r, followupCode:code};
   },
-  async portal(ref:string,code:string):Promise<Referral|null> {
+  async portalLogin(ref:string,code:string):Promise<{referral:Referral;portalHash:string}|null> {
     if(!/^[a-f0-9]{32}$/.test(code)) return null;
     const r:any=chk(await sb.from("referrals").select("*").eq("ref",ref.trim().toUpperCase()).eq("portal_hash",sha(code)).maybeSingle());
-    return r && !r.purged_at ? publicReferral(r) : null;
+    return r && !r.purged_at ? { referral: publicReferral(r), portalHash: r.portal_hash } : null;
+  },
+  async portal(ref:string,code:string):Promise<Referral|null> { return (await this.portalLogin(ref,code))?.referral ?? null; },
+  async portalById(id:number):Promise<{referral:Referral;portalHash:string}|null> {
+    const r:any=chk(await sb.from("referrals").select("*").eq("id",id).maybeSingle());
+    return r && !r.purged_at ? { referral: publicReferral(r), portalHash: r.portal_hash } : null;
   },
   async resetPortal(id:number) { const code=crypto.randomBytes(16).toString("hex"); chk(await sb.from("referrals").update({portal_hash:sha(code)}).eq("id",id)); return code; },
   // seenUpTo is the latest_followup_at the viewer is being shown, so a follow-up
@@ -206,6 +236,10 @@ export const db = {
     const users=await this.users();
     return {...r,entries:r.entries.map((e:any)=>({...e,name:users.find(u=>u.id===e.userId)?.name||"Former team member",phone:users.find(u=>u.id===e.userId)?.phone||""}))};
   },
+  async rosterUserIds(team:Team,day:string):Promise<number[]> {
+    const r:any=chk(await sb.from("unit_rosters").select("entries").eq("team",team).eq("day",day).maybeSingle());
+    return (r?.entries||[]).map((e:any)=>Number(e.userId)).filter((id:number)=>Number.isInteger(id)&&id>0);
+  },
   async saveRoster(team:Team,day:string,entries:any[],name:string) { return chk(await sb.from("unit_rosters").upsert({team,day,entries,updated_by:name,updated_at:new Date().toISOString()})); },
   async update(id: number, u: Record<string, any>) {
     const cur: any = await this.get(id); if (!cur) return undefined;
@@ -227,10 +261,60 @@ export const db = {
     return Array.from(m.values());
   },
 
+  /* push notifications */
+  async savePushSub(sub:{endpoint:string;p256dh:string;auth:string},owner:{userId:number}|{referralId:number}) {
+    const row={endpoint:sub.endpoint,p256dh:sub.p256dh,auth:sub.auth,user_id:"userId" in owner?owner.userId:null,referral_id:"referralId" in owner?owner.referralId:null};
+    chk(await sb.from("push_subscriptions").upsert(row,{onConflict:"endpoint"}));
+  },
+  async removePushSub(endpoint:string,owner?:{userId:number}|{referralId:number}) {
+    let q=sb.from("push_subscriptions").delete().eq("endpoint",endpoint);
+    if(owner) q="userId" in owner?q.eq("user_id",owner.userId):q.eq("referral_id",owner.referralId);
+    chk(await q);
+  },
+  async pushSubsForUsers(ids:number[]):Promise<PushSub[]> {
+    if(!ids.length) return [];
+    return chk(await sb.from("push_subscriptions").select("endpoint,p256dh,auth").in("user_id",ids)) as PushSub[];
+  },
+  async pushSubsForReferral(id:number):Promise<PushSub[]> {
+    return chk(await sb.from("push_subscriptions").select("endpoint,p256dh,auth").eq("referral_id",id)) as PushSub[];
+  },
+  async pushDeviceCounts(ids:number[]):Promise<Record<number,number>> {
+    if(!ids.length) return {};
+    const rows=chk(await sb.from("push_subscriptions").select("user_id").in("user_id",ids)) as any[];
+    return rows.reduce((m:Record<number,number>,r)=>{m[r.user_id]=(m[r.user_id]||0)+1;return m;},{});
+  },
+  // True only for the caller that recorded the key; a repeat or a second server gets false.
+  async claimPush(key:string):Promise<boolean> {
+    const r=await sb.from("push_sent").insert({key});
+    if(!r.error) return true;
+    if(isUniqueViolation(r.error)) return false;
+    throw new Error(r.error.message);
+  },
+  async prunePushSent(days:number) { chk(await sb.from("push_sent").delete().lt("sent_at",new Date(Date.now()-days*86400e3).toISOString())); },
+  async pushDue(since:string,waitingSince:string,now:string) {
+    const cols="id,ref,team,priority,status,created_at,opened_at,ack_at,latest_followup_at,followup_seen_at,remind_at,awaiting_info_at,referrer_id";
+    const base=()=>sb.from("referrals").select(cols).is("purged_at",null);
+    const [unattended,followups,questions,waiting]=await Promise.all([
+      base().eq("status","pending").is("opened_at",null).is("ack_at",null).gte("created_at",since).lte("created_at",now),
+      base().gte("latest_followup_at",since).lte("latest_followup_at",now),
+      base().gte("awaiting_info_at",since).lte("awaiting_info_at",now),
+      base().eq("status","waiting").gte("remind_at",waitingSince).lte("remind_at",now),
+    ]);
+    const rows=(r:any)=>(chk(r) as any[]).map(toCamel);
+    return {unattended:rows(unattended),followups:rows(followups).filter((r:any)=>!r.followupSeenAt||r.latestFollowupAt>r.followupSeenAt),questions:rows(questions),waiting:rows(waiting)};
+  },
+
   /* audit */
+  // A failed audit write is retried once straight away, then held in memory and
+  // retried (in order) until it lands. The queue is bounded and lost on restart,
+  // so /api/health reports it and operators can alert on a non-empty backlog.
   async audit(e: { userId?: number | null; userName?: string; action: string; referralId?: number | null; detail?: string; ip?: string }) {
-    const r = await sb.from("audit_log").insert({ user_id: e.userId ?? null, user_name: e.userName || "", action: e.action, referral_id: e.referralId ?? null, detail: (e.detail || "").slice(0, 500), ip: e.ip || "" });
-    if (r.error) console.error("audit failed", r.error.message);
+    const row = { user_id: e.userId ?? null, user_name: e.userName || "", action: e.action, referral_id: e.referralId ?? null, detail: (e.detail || "").slice(0, 500), ip: e.ip || "" };
+    if (auditQueue.length) await flushAuditQueue();
+    if (!auditQueue.length && (await insertAudit(row) || await insertAudit(row))) return;
+    console.error("audit write failed; queued for retry");
+    if (auditQueue.length >= AUDIT_QUEUE_MAX) { auditQueue.shift(); auditDropped++; }
+    auditQueue.push(row); ensureAuditFlusher();
   },
   async auditList(opts: { referralId?: number; limit?: number }): Promise<AuditRow[]> {
     let q = sb.from("audit_log").select("*").order("at", { ascending: false }).limit(opts.limit || 300);

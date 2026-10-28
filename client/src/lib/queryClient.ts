@@ -16,12 +16,12 @@ export async function apiRequest(
   method: string,
   url: string,
   data?: unknown | undefined,
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal; headers?: Record<string, string> },
 ): Promise<Response> {
   const token = session.token;
   const res = await fetch(`${API_BASE}${url}`, {
     method,
-    headers: { ...(data ? { "Content-Type": "application/json" } : {}), ...authH(token) },
+    headers: { ...(data ? { "Content-Type": "application/json" } : {}), ...authH(token), ...options?.headers },
     body: data ? JSON.stringify(data) : undefined,
     signal: options?.signal,
   });
